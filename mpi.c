@@ -1,7 +1,9 @@
 #include "mpi.h"
 #include <stdio.h>
 #include <string.h>
- 
+
+//Version 0.02
+
 int main(int argc, char *argv[])
 {
     int myrank, message_size=50, tag=99;
