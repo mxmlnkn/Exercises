@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-//Version 0.02
+//Version 0.03
 
 int main(int argc, char *argv[])
 {
@@ -10,7 +10,7 @@ int main(int argc, char *argv[])
     char message[message_size];
     MPI_Status status;
  
-    MPI_Init(&argc, &argv);
+    MPI_Init(&argc, &argv); //Somehow this fails :S
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
  
     if (myrank == 0) {
