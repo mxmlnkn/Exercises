@@ -5,7 +5,7 @@
 #include <float.h>
 #include <assert.h>
 
-#define double double
+#define DEBUG 1
 
 class Vec {
 public:
@@ -83,7 +83,7 @@ double Vec::norm() const {
     assert( res == res );
     return res;
 }
-    
+
 
 template<typename T>
 Vec operator*(T const& scalar, Vec rhs)
@@ -151,19 +151,28 @@ struct Particle {
             return F;
         }
 
-        Vec Own(Particle particle[], const double dt) { //is this Verlet ???
+        Vec Verlet(Particle particle[], const double dt) {
+            particle[1].p += force(particle) * dt/2.0 ;
+            particle[1].r += particle[1].p / particle[1].m * dt/2.0;
+            particle[1].r += particle[1].p / particle[1].m * dt/2.0;
+            particle[1].p += force(particle) * dt/2.0 ;
+            /*
+            //Calculate F
             double r = (particle[0].r - particle[1].r).norm();
-            Vec F = (particle[0].r - particle[1].r) / r * (-1.0) * particle[0].q * particle[1].q / ( 4 * M_PI * epsilon0 * r*r ) ;
-            if (F != F) {
-                printf("r:%e\n",r );
-                printf("    ( %e )        ( %e )        ( %e )\n", particle[1].r.x, particle[1].p.x, F.x );
-                printf("r = ( %e )  , p = ( %e )  , F = ( %e )\n", particle[1].r.y, particle[1].p.y, F.y );
-                printf("    ( %e )        ( %e )        ( %e )\n", particle[1].r.z, particle[1].p.z, F.z );
-            }
-            assert(F == F);
-            particle[1].p += F * dt ;
-            particle[1].r += particle[1].p / particle[1].m * dt;
-            return F;
+            Vec F = (particle[0].r - particle[1].r) / r * (-1.0) *
+                     particle[0].q * particle[1].q / ( 4 * M_PI * epsilon0 * r*r );
+			#if DEBUG == 1
+				if (F != F) {
+					printf("r:%e\n",r );
+					printf("    ( %e )        ( %e )        ( %e )\n", particle[1].r.x, particle[1].p.x, F.x );
+					printf("r = ( %e )  , p = ( %e )  , F = ( %e )\n", particle[1].r.y, particle[1].p.y, F.y );
+					printf("    ( %e )        ( %e )        ( %e )\n", particle[1].r.z, particle[1].p.z, F.z );
+				}
+				assert(F == F);
+            #endif
+
+            particle[1].p += F * dt ;*/
+            return force(particle);
         }
 
 double CalcTotalEnergy( const unsigned int particleCount, struct Particle particle[] ) {
@@ -203,14 +212,14 @@ struct return_data simulate_scattering(const unsigned int particleCount, Particl
     struct return_data data;
 	data.theta_max = 0;
 	data.rmin      = r0;
-    
+
 	//some constants which only depend on the initial conditions
 	double alpha  = particle[0].q * particle[1].q / ( 4 * M_PI * epsilon0 );
 	double Ew     = sqrt( 2*E/particle[1].m ) * L/alpha;
-	double theta0 = asin( ( Ew*L/( sqrt(2*particle[1].m*E) * r0  ) + 1 ) / sqrt( Ew*Ew+1 ) ) - asin( 1/sqrt( Ew*Ew+1 ) );
-	
+	double theta0 = asin( ( Ew*L/( sqrt(2*particle[1].m*E) * r0  ) + 1 ) / sqrt( Ew*Ew+1 ) ) 
+       - asin( 1/sqrt( Ew*Ew+1 ) ) -(M_PI - acos( particle[1].r*Vec(1,0,0)/particle[1].r.norm() ) );
     printf("L:%e, E:%e, epsilon:%E\n", L,E,theta0);
-	
+
     //open log file
     FILE * log = NULL;
     if (writeToFile) {
@@ -228,12 +237,11 @@ struct return_data simulate_scattering(const unsigned int particleCount, Particl
     do {
         //push particles
         //for (int i = 0; i < particleCount-1; i++) {
-            Vec F = Own( particle, dt );
+            Vec F = Verlet( particle, dt );
         //}
 
         //calc theta, r
         double r  = (particle[0].r - particle[1].r).norm();
-        double r2 = r*r;
         double Et = CalcTotalEnergy( particleCount, particle );
         double Lt = CalcAngularMomentum( particleCount, particle );
         if (r < data.rmin) data.rmin = r;
@@ -249,9 +257,10 @@ struct return_data simulate_scattering(const unsigned int particleCount, Particl
                                  - asin( (   Ew*L/( sqrt(2*particle[1].m*E) * r  ) + 1 ) / sqrt( Ew*Ew+1 ) );
         if (returning) {
             double theta_inf = 2*asin( 1/sqrt( 1.0 + Ew*Ew ) ) ;
-            //theta_inf = 164.1842/180.0*M_PI;	//numerical result... 
-            theta_calc = M_PI - theta_calc + theta_inf;// + theta0;
+            //theta_inf = 164.1842/180.0*M_PI;	//numerical result...
+            theta_calc = M_PI - theta_calc + theta_inf;
         }
+        theta_calc += theta0;
         theta_calc *= 180/M_PI;
         data.theta_max = theta;
         if ( ( i % fprint_interval == 0 || r > r0 ) && writeToFile) {
@@ -271,17 +280,17 @@ struct return_data simulate_scattering(const unsigned int particleCount, Particl
     printf ("%e = r > r0 = %e\n" ,(particle[0].r - particle[1].r).norm() ,r0);
 
     double r = (particle[0].r - particle[1].r).norm();
-    
+
     data.rmin_calc = alpha/(2*E)*( 1 + sqrt( 1 + Ew*Ew ) );
     //double theta_max_calc = 2*asin( 1/sqrt( 1+2*E*L*L/(particle[1].m*alpha*alpha) ) ) ;
     double corrector =  1.0 - ( Ew*L/( sqrt(2*particle[1].m*E) * data.rmin_calc  ) + 1 ) /sqrt( Ew*Ew+1 ) ;
     printf("Correction Term: %E deg\n", corrector);
     data.theta_max_calc = 2*asin( ( Ew*L/(sqrt(2*particle[1].m*E)*r) + 1 )/sqrt( Ew*Ew+1 ) ); //2*asin( 1/sqrt( 1+Ew*Ew ) );
     data.theta_max_calc *= 180/M_PI;
-    //if (!quiet) {
+    if (!quiet) {
         printf("rmin num.:     %E <-> %E :rmin anal. => dev:%e\n", data.rmin, data.rmin_calc, (data.rmin - data.rmin_calc) / data.rmin_calc );
         printf("thetamax num.: %E <-> %E :anal.      => dev:%e\n", data.theta_max, data.theta_max_calc, (data.theta_max - data.theta_max_calc) / data.theta_max_calc );
-    //}
+    }
 
     if (writeToFile)
         fclose(log);
@@ -293,17 +302,7 @@ int main(void) {
     for (int i=0; i<particleCount; i++) {
         particle[i].p.x = rand()/(float)RAND_MAX;
     }*/
-    
-    
-    /* Because of this internally units ARE needed! Calculating with SI the whole time uses up unneeded exponent "space" */
-    /*printf("Max Float:%e, Float Min:%e\n", FLT_MAX, FLT_MIN);
-    printf("Max Float:%i, Float Min:%i\n", FLT_MAX_EXP, FLT_MIN_EXP);
-    float fer = 1.00e-42;   //why the fuck is this working? => "FLT_MAX_EXP: The maximal exponent of a floating point value expressed in base FLT_RADIX; greater exponents are principally possible (up to 16383), but not supported in all math functions."
-    float rec = 1.0/fer;
-    printf("1.0/%e = %e\n", fer, rec);
-    // FURTHER PROBLEM HERE! somehow printf shows the right number, but only if %e instead of %f is used. Is there some kind of buffer overflow happning in both the assignment of "fer" AND the readout in the printf function Oo ???
-    return 0; */
-    
+
     double m      = m_e;
     double q1     = -elementary_charge, q2 = -elementary_charge;
     double s      = 250e-15;	//collision parameter
@@ -314,7 +313,7 @@ int main(void) {
 	double Ew     = sqrt(2*E/m) * L/alpha;
 	double rmin   = alpha/(2*E)*( 1 + sqrt( 1 + Ew*Ew ) );
     printf("E:%E, L:%E\n", E,L);
-    
+
     //statistics for more than one scattering event
     FILE * stat = fopen( "statistics.dat", "w" );
     fprintf( stat, "#x\tdt\tsteps\tdev theta\n" );
@@ -326,9 +325,9 @@ int main(void) {
 			assert( r0 >= rmin ); //else asin will fail !
 			double phi0 = M_PI + asin( 1 / sqrt(Ew*Ew+1) )
                                - asin( ( Ew*L/( sqrt(2*m*E)*r0 ) + 1 ) / sqrt(Ew*Ew+1) );
-			
+
 			//TODO ANGABE VON r0 veraendert streuwinkel!!! shouldn't happen! -> Calculation of vec p wrong?
-			
+
             Particle particle[2];
             //Particle to be scattered
             particle[1].m   = m;
@@ -343,14 +342,21 @@ int main(void) {
             particle[1].r.y =  r0*sin(M_PI - phi0);
             particle[1].p.x = p*s/(r0*r0) * ( particle[1].r.y - particle[1].r.x * sqrt( pow( r0*p0/(p*s) ,2) - 1 ) );
             particle[1].p.y = sqrt(p0*p0 - particle[1].p.x * particle[1].p.x);
+            //old pure numerical version. This also works now because of theta0 (asymptote approximation)
+              /*particle[1].r.x = -r0;
+                particle[1].r.y = s;
+                particle[1].p.x = p;
+                particle[1].p.y = 0; */
             //particle 0 is static scattering center, won't move (!!!)
             particle[0].m   = m_p;
             particle[0].q   = q1;
-            printf( "phi0:%E, p0:%E, p_inf=%E\n", (M_PI-phi0)/M_PI*180, p0,p );
+
+            double initial_angle = acos( particle[1].p * Vec(1,0,0) / particle[1].p.norm() ) *180/M_PI;
+            printf( "phi0:%E, p0:%E, p_inf:%E, <(p0,x):%E\n", (M_PI-phi0)/M_PI*180, p0,p,initial_angle );
             printf("     ( %e )         ( %e )\n", particle[1].r.x, particle[1].p.x );
             printf("r0 = ( %e )  , p0 = ( %e )\n", particle[1].r.y, particle[1].p.y );
             printf("     ( %e )         ( %e )\n", particle[1].r.z, particle[1].p.z );
-            
+
             E = CalcTotalEnergy(2,particle);
             L = CalcAngularMomentum(2,particle);
             printf( "E:%E, L:%E\n", E,L );
