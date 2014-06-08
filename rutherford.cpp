@@ -4,6 +4,7 @@
 #include <math.h>
 #include <float.h>
 #include <assert.h>
+#include <string.h>
 
 #define DEBUG 1
 
@@ -203,72 +204,83 @@ struct return_data {
     double theta_max, theta_max_calc, rmin, rmin_calc;
 };
 
-struct return_data simulate_scattering(const unsigned int particleCount, Particle particle[], const double dt, bool writeToFile = false, bool quiet = true) {
+struct return_data simulate_scattering(const unsigned int particleCount, Particle particle[], const double dt, const char* filename = "", unsigned int fprint_interval = 0 , unsigned int print_interval = 0) {
+    bool writeToFile = strlen(filename) && fprint_interval;
+    bool quiet       = !print_interval;
+
     //Calculate some conserved observables
-    double E    = CalcTotalEnergy( particleCount, particle );
-    double L    = CalcAngularMomentum( particleCount, particle );
-    double r0   = (particle[0].r - particle[1].r).norm();
-    Vec dir0       = particle[1].p / particle[1].p.norm();      //to remember initial direction of movement
-    struct return_data data;
-	data.theta_max = 0;
-	data.rmin      = r0;
-
+    double E         = CalcTotalEnergy( particleCount, particle );
+    double L         = CalcAngularMomentum( particleCount, particle );
+    double r0        = (particle[0].r - particle[1].r).norm();
+    Vec dir0         = particle[1].p / particle[1].p.norm();      //to remember initial direction of movement
+    double phi_min; //holds angle of position nearest to scattering center
+    
 	//some constants which only depend on the initial conditions
-	double alpha  = particle[0].q * particle[1].q / ( 4 * M_PI * epsilon0 );
-	double Ew     = sqrt( 2*E/particle[1].m ) * L/alpha;
-	double theta0 = asin( ( Ew*L/( sqrt(2*particle[1].m*E) * r0  ) + 1 ) / sqrt( Ew*Ew+1 ) ) 
+	double alpha     = particle[0].q * particle[1].q / ( 4 * M_PI * epsilon0 );
+	double Ew        = sqrt( 2*E/particle[1].m ) * L/alpha;
+	double theta0    = asin( ( Ew*L/( sqrt(2*particle[1].m*E) * r0  ) + 1 ) / sqrt( Ew*Ew+1 ) ) 
        - asin( 1/sqrt( Ew*Ew+1 ) ) -(M_PI - acos( particle[1].r*Vec(1,0,0)/particle[1].r.norm() ) );
-    printf("L:%e, E:%e, epsilon:%E\n", L,E,theta0);
+    double theta_inf = 2*asin( 1/sqrt( 1.0 + Ew*Ew ) ); //scattering angle for infinity!
+    double rmin_calc = alpha/(2*E)*( 1 + sqrt( 1 + Ew*Ew ) );
+    if (!quiet)
+        printf("L:%e, E:%e, epsilon:%E\n", L,E,theta0);
 
+    //Prepare return packet
+    struct return_data data;
+        data.rmin           = r0;
+        data.rmin_calc      = rmin_calc;
+        /* the error on theta_max is fairly large, because the calculated    *
+         * theta assumes a particle to come from infinity and leave to it.   *
+         * The error on theta_max therefore is the error of the asymptote!   *
+         * For asymptote corrected calculated thetas, see the theta which is *
+         * written into the log file and there the last entry, which is      *
+         * equivalent to theta max.                                          */
+        data.theta_max_calc = theta_inf;
+    
     //open log file
     FILE * log = NULL;
     if (writeToFile) {
         log = fopen ("traj.dat","w");
-        fprintf(log,"#t\trx\try\trz\tpx\tpy\tpz\tr\ttheta\tE\tL\n");
+        fprintf(log,"#t\trx\try\trz\tpx\tpy\tpz\tr\ttheta\t(Et-E)/E\t(Lt-L)/L"
+                    "\ttheta analyt.\t(th-th_anal/th_anal\n");
         assert(log != NULL);
     }
-
-    const double t_end = 2* fabs(particle[1].r.x) / sqrt( 2*E/particle[1].m );
-    int print_interval    = t_end / dt / 10;
-    int fprint_interval   = t_end / dt / 200;
 
     bool returning = false;
     int i = 0;
     do {
         //push particles
-        //for (int i = 0; i < particleCount-1; i++) {
-            Vec F = Verlet( particle, dt );
-        //}
+        Vec F = Verlet( particle, dt );
 
         //calc theta, r
         double r  = (particle[0].r - particle[1].r).norm();
         double Et = CalcTotalEnergy( particleCount, particle );
         double Lt = CalcAngularMomentum( particleCount, particle );
-        if (r < data.rmin) data.rmin = r;
+        if (r < data.rmin) {
+            data.rmin = r;
+            phi_min = acos( particle[1].r * Vec(1,0,0) / particle[1].r.norm() );
+        }
         else if (!returning) {
             returning = true;
+            printf("phi_min:%E\n",phi_min*180/M_PI);
             printf("Going back home now!\n"); //but calculate phi0 beforehand
         }
 
         //calc deviation to analytical theta
-        //double theta = acos( (particle[1].p / particle[1].p.norm()) * dir0 )/M_PI*180;
-        double theta = acos( (particle[1].r / particle[1].r.norm()) * Vec(1,0,0) )/M_PI*180;
-        double theta_calc = M_PI + asin( ( 0*Ew*L/( sqrt(2*particle[1].m*E) * r0 ) + 1 ) / sqrt( Ew*Ew+1 ) )
-                                 - asin( (   Ew*L/( sqrt(2*particle[1].m*E) * r  ) + 1 ) / sqrt( Ew*Ew+1 ) );
-        if (returning) {
-            double theta_inf = 2*asin( 1/sqrt( 1.0 + Ew*Ew ) ) ;
-            //theta_inf = 164.1842/180.0*M_PI;	//numerical result...
-            theta_calc = M_PI - theta_calc + theta_inf;
-        }
-        theta_calc += theta0;
-        theta_calc *= 180/M_PI;
-        data.theta_max = theta;
+        double theta      = acos( (particle[1].r / particle[1].r.norm()) * Vec(1,0,0) );
+        double theta_inf  = 2*asin( 1/sqrt( 1.0 + Ew*Ew ) ); //scattering angle for infinity!
+        double phi_r      = asin( (Ew*L/(sqrt(2*particle[1].m*E)*r)+1) / sqrt(Ew*Ew+1) );
+        double theta_calc = M_PI + theta0 + theta_inf/2.0 - phi_r ;
+        if (returning)
+            theta_calc = theta0 + theta_inf/2.0 + phi_r;
+            
+        //Debug Output
         if ( ( i % fprint_interval == 0 || r > r0 ) && writeToFile) {
             fprintf(log, "%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\n", i*dt, particle[1].r.x,
             particle[1].r.y, particle[1].r.z, particle[1].p.x, particle[1].p.y,
             particle[1].p.z, r, theta, (Et-E)/E, (Lt-L)/L, theta_calc, (theta-theta_calc)/theta_calc );
         }
-        if ( ( i % print_interval == 0 || r > r0 ) && !quiet) {
+        if ( !quiet && ( i % print_interval == 0 || r > r0 ) ) {
             printf("r:%e, theta: num:%e deg, anal:%e, F:%e\n",r, theta, theta_calc, F.norm() );
             printf("    ( %e )        ( %e )        ( %e )\n", particle[1].r.x, particle[1].p.x, F.x );
             printf("r = ( %e )  , p = ( %e )  , F = ( %e )\n", particle[1].r.y, particle[1].p.y, F.y );
@@ -277,19 +289,15 @@ struct return_data simulate_scattering(const unsigned int particleCount, Particl
 
         i++;
     } while( (particle[0].r - particle[1].r).norm() < r0 );
-    printf ("%e = r > r0 = %e\n" ,(particle[0].r - particle[1].r).norm() ,r0);
 
-    double r = (particle[0].r - particle[1].r).norm();
-
-    data.rmin_calc = alpha/(2*E)*( 1 + sqrt( 1 + Ew*Ew ) );
-    //double theta_max_calc = 2*asin( 1/sqrt( 1+2*E*L*L/(particle[1].m*alpha*alpha) ) ) ;
-    double corrector =  1.0 - ( Ew*L/( sqrt(2*particle[1].m*E) * data.rmin_calc  ) + 1 ) /sqrt( Ew*Ew+1 ) ;
-    printf("Correction Term: %E deg\n", corrector);
-    data.theta_max_calc = 2*asin( ( Ew*L/(sqrt(2*particle[1].m*E)*r) + 1 )/sqrt( Ew*Ew+1 ) ); //2*asin( 1/sqrt( 1+Ew*Ew ) );
-    data.theta_max_calc *= 180/M_PI;
+    //data.theta_max = acos( (particle[1].p / particle[1].p.norm()) * dir0 );
+    data.theta_max = acos( (particle[1].r / particle[1].r.norm()) * Vec(1,0,0) );
     if (!quiet) {
         printf("rmin num.:     %E <-> %E :rmin anal. => dev:%e\n", data.rmin, data.rmin_calc, (data.rmin - data.rmin_calc) / data.rmin_calc );
-        printf("thetamax num.: %E <-> %E :anal.      => dev:%e\n", data.theta_max, data.theta_max_calc, (data.theta_max - data.theta_max_calc) / data.theta_max_calc );
+        printf("thetamax num.: %E <-> %E :anal.      => dev:%e\n", data.theta_max*180/M_PI, data.theta_max_calc*180/M_PI, (data.theta_max - data.theta_max_calc) / data.theta_max_calc );
+        
+        double thm2 = M_PI - 2*(M_PI - phi_min) + theta0;
+        printf("theta_max from epsilon derivation and minimal distance: %E -> dev:%E\n", thm2*180/M_PI, (thm2-data.theta_max)/data.theta_max );
     }
 
     if (writeToFile)
@@ -326,8 +334,6 @@ int main(void) {
 			double phi0 = M_PI + asin( 1 / sqrt(Ew*Ew+1) )
                                - asin( ( Ew*L/( sqrt(2*m*E)*r0 ) + 1 ) / sqrt(Ew*Ew+1) );
 
-			//TODO ANGABE VON r0 veraendert streuwinkel!!! shouldn't happen! -> Calculation of vec p wrong?
-
             Particle particle[2];
             //Particle to be scattered
             particle[1].m   = m;
@@ -353,9 +359,9 @@ int main(void) {
 
             double initial_angle = acos( particle[1].p * Vec(1,0,0) / particle[1].p.norm() ) *180/M_PI;
             printf( "phi0:%E, p0:%E, p_inf:%E, <(p0,x):%E\n", (M_PI-phi0)/M_PI*180, p0,p,initial_angle );
-            printf("     ( %e )         ( %e )\n", particle[1].r.x, particle[1].p.x );
-            printf("r0 = ( %e )  , p0 = ( %e )\n", particle[1].r.y, particle[1].p.y );
-            printf("     ( %e )         ( %e )\n", particle[1].r.z, particle[1].p.z );
+            printf("     ( %e )         ( %e )\n  ", particle[1].r.x, particle[1].p.x );
+            printf("r0 = ( %e )  , p0 = ( %e )\n  ", particle[1].r.y, particle[1].p.y );
+            printf("     ( %e )         ( %e )\n\n", particle[1].r.z, particle[1].p.z );
 
             E = CalcTotalEnergy(2,particle);
             L = CalcAngularMomentum(2,particle);
@@ -368,7 +374,8 @@ int main(void) {
             double steps = pow(10,i);
             const double dt = t_end / steps;
 
-            struct return_data data = simulate_scattering( 2, particle, dt, true, false );
+            struct return_data data = simulate_scattering( 2, particle, dt, "traj.dat", steps/200, steps );
+            
             double dev_theta = (data.theta_max - data.theta_max_calc) / data.theta_max_calc;
             fprintf( stat, "%e\t%e\t%e\t%e\\n", particle[1].r.x, dt, steps, dev_theta );
             printf( "i:%i, j:%i => x:%e, dt:%e => devTheta:%e\n", i,j, particle[1].r.x, dt, dev_theta );
