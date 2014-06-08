@@ -6,6 +6,7 @@ public:
     Vec(void) : x(0),y(0),z(0) { }
     Vec(const Vec & v) : x(v.x),y(v.y),z(v.z) { }
     Vec(const double x, const double y, const double z) : x(x),y(y),z(z) { }
+    double & operator[] (const uint16_t i);
     Vec& operator+= (const Vec & v);
     Vec operator+ (const Vec & v) const;
     Vec& operator-= (const Vec & v);
@@ -19,6 +20,15 @@ public:
     bool operator!= (const Vec v) const;
     double norm() const;
 };
+double & Vec::operator[] (const uint16_t i) {
+    switch (i) {
+        case 0: return x;
+        case 1: return y;
+        case 2: return z;
+    }
+    assert( i < 3 );
+    return x;
+}
 double Vec::operator* (const Vec v) const {
     return this->x * v.x + this->y * v.y + this->z * v.z;
 }
@@ -29,16 +39,16 @@ Vec& Vec::operator+= (const Vec & v) {
     this->z += v.z;
     return *this;
 }
-Vec Vec::operator+ (const Vec & v) const {
+inline Vec Vec::operator+ (const Vec & v) const {
     Vec res = *this;
     res += v;
     return res;
 }
 
-Vec& Vec::operator-= (const Vec & v) {
+inline Vec& Vec::operator-= (const Vec & v) {
     return (*this) += v * (-1);
 }
-Vec Vec::operator- (const Vec & v) const {
+inline Vec Vec::operator- (const Vec & v) const {
     return (*this)+( v*(-1) );
 }
 
@@ -48,24 +58,24 @@ Vec& Vec::operator*= (const double a) {
     this->z *= a;
     return *this;
 }
-Vec Vec::operator* (const double a) const {
+inline Vec Vec::operator* (const double a) const {
     Vec res = *this;
     res *= a;
     return res;
 }
 
-Vec& Vec::operator/= (const double a) {
+inline Vec& Vec::operator/= (const double a) {
     (*this) *= 1.0/a;
     return *this;
 }
-Vec Vec::operator/ (const double a) const {
+inline Vec Vec::operator/ (const double a) const {
     return (*this)*(1.0/a);
 }
 
 bool Vec::operator== (const Vec v) const {
     return ( (this->x == v.x) && (this->y == v.y) && (this->z == v.z) );
 }
-bool Vec::operator!= (const Vec v) const {
+inline bool Vec::operator!= (const Vec v) const {
     return !((*this) == v);
 }
 double Vec::norm() const {

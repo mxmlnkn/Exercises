@@ -18,6 +18,7 @@ const double ELECTRON_CHARGE_SI       =-ELEMENTARY_CHARGE_SI; // C
 const double ION_MASS_SI              = PROTON_MASS_SI;       // kg
 const double ION_CHARGE_SI            = ELEMENTARY_CHARGE_SI; // C
 const uint32_t NUMBER_OF_PARTICLES_PER_CELL = 25;   // NUM instead of NUMBER_OF in picongpu is also inconsistent, and there are other longer names, soo ...
+const uint16_t DEFAULT_PARTICLE_SHAPE = 0;
 
 //GridConfig.param
 const double DELTA_T_SI               = 1.e-21;
@@ -67,3 +68,5 @@ const double DELTA_T                  = DELTA_T_SI / UNIT_TIME;
 const double CELL_SIZE_X              = CELL_SIZE_X_SI / UNIT_LENGTH;
 const double CELL_SIZE_Y              = CELL_SIZE_Y_SI / UNIT_LENGTH;
 const double CELL_SIZE_Z              = CELL_SIZE_Z_SI / UNIT_LENGTH;
+const uint32_t CELL_SIZE[3]           = { CELL_SIZE_X, CELL_SIZE_Y, CELL_SIZE_Z };
+const uint32_t NUMBER_OF_CELLS[3]     = { NUMBER_OF_CELLS_X, NUMBER_OF_CELLS_Y, NUMBER_OF_CELLS_Z };
