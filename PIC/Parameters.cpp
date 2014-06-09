@@ -1,4 +1,7 @@
-const uint32_t SIMDIM = 2;
+//componentsConfig.param
+const uint16_t SIMDIM                 = 2;
+const uint16_t NUMBER_OF_NEIGHBORS    = 2;  //Neighboring Cells to be included for periodic Force. 0 means no periodic summation
+const uint32_t NUMBER_OF_STEPS        = 1e5;
 
 //GasConfig.param
 const double GAS_DENSITY_SI           = 1.e30; // 1/m^3
@@ -18,7 +21,7 @@ const double ELECTRON_CHARGE_SI       =-ELEMENTARY_CHARGE_SI; // C
 const double ION_MASS_SI              = PROTON_MASS_SI;       // kg
 const double ION_CHARGE_SI            = ELEMENTARY_CHARGE_SI; // C
 const uint32_t NUMBER_OF_PARTICLES_PER_CELL = 25;   // NUM instead of NUMBER_OF in picongpu is also inconsistent, and there are other longer names, soo ...
-const uint16_t DEFAULT_PARTICLE_SHAPE = 0;
+const uint16_t DEFAULT_PARTICLE_SHAPE = 1;  //00:point-point, 01:ball-ball (CIC radialsymmetric equivalent), 99:sphere-sphere    
 
 //GridConfig.param
 const double DELTA_T_SI               = 1.e-21;
@@ -29,6 +32,7 @@ const double CELL_SIZE_SI             = pow( double(NUMBER_OF_PARTICLES_PER_CELL
 const double CELL_SIZE_X_SI           = CELL_SIZE_SI;   // (!!!) picongpu naming with width, height and depth seems to be too random => could lead to mixups
 const double CELL_SIZE_Y_SI           = CELL_SIZE_SI;
 const double CELL_SIZE_Z_SI           = CELL_SIZE_SI;
+const uint16_t BOUNDARY_CONDITION     = 0;  //0:periodic, 1:reflecting, 2:adhering
 
 //================================== Units ===================================//
 const double UNITCONV_keV_to_Joule    = 1.e3 * ELEMENTARY_CHARGE_SI;

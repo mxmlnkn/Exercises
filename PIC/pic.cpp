@@ -1,4 +1,16 @@
 // del pic.exe && g++ pic.cpp -o pic.exe -Wall -fopenmp && pic.exe
+/******************************************************************************
+ * ToDo:                                                                      *
+ *   - use cuda                                                               *
+ *   - implement weighting                                                    *
+ *   - make it work for more than one cell (only force of particles in same cell)
+ *   - weighting ~ m ~ 1/a ~ dt_min_needed ?!                                 *
+ *   - copy relativistic formula in here                                      *
+ *   - copy exact (relativistic) pusher from picongpu to Verlet               *
+ *   - using more particles see them taking on maxwell distribution (fit)     *
+ *   - make work for 3D                                                       *
+ *   - seed with maxwell temperature                                          *
+ ******************************************************************************/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,25 +53,40 @@ inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & 
      * ..                                                                    *
      * 99 - sphere-sphere                                                    */
 
-    const double cellWidth = CELL_SIZE_X;
-    const Vec r12  = particle1.r - particle2.r;
-    const double r = r12.norm();
-    Vec F12 = particle1.q * particle2.q / ( 4.*M_PI*EPS0 ) * r12/r ;
-
-    if (colshape == 99) {
-        if (r < cellWidth)
-            F12 = F12 / ( cellWidth * cellWidth );
-    } else if (colshape == 0)
-        F12 = F12 / ( r*r ) ;
-    else if( colshape == 1) {
-        const double radii_ratio = r/(0.5*cellWidth);
-        if (r < cellWidth)
-            // will result in F12 = F12 for radii_ratio = 2 !!!
-            F12 = F12 * double( ( (1./32.) * pow( radii_ratio , 6 )
-                         - (9./16.) * pow( radii_ratio , 4 )
-                         + pow( radii_ratio , 3 ) ));
+    const double cloudRadius = CELL_SIZE_X / 2.0;
+    const double alpha       = particle1.q * particle2.q / ( 4.*M_PI*EPS0 );
+    Vec F(0,0,0);
+    
+    // Loop about surrounding cells where the particle is also because of periodic boundary conditions 
+    // Try to find analytic formula for this ??? Like in solid state physics !
+    assert( SIMDIM == 2 );
+    for (int iPeriodY = -NUMBER_OF_NEIGHBORS; iPeriodY <= NUMBER_OF_NEIGHBORS; iPeriodY++)
+    for (int iPeriodX = -NUMBER_OF_NEIGHBORS; iPeriodX <= NUMBER_OF_NEIGHBORS; iPeriodX++) {
+        
+        const Vec r12  = particle1.r - ( particle2.r + Vec( iPeriodX * CELL_SIZE_X, iPeriodY * CELL_SIZE_Y, 0) );
+        const double r = r12.norm();
+        Vec F12 = alpha * r12/r;
+        
+        if (colshape == 99) {
+            if (r < 2.*cloudRadius)
+                F12 = F12 / ( 4.*cloudRadius*cloudRadius );
+            else
+                F12 = F12 / ( r*r );
+        } else if (colshape == 0) {
+            F12 = F12 / ( r*r );
+        } else if( colshape == 1) {
+            if (r < 2.*cloudRadius) {
+                const double radii_ratio = r/cloudRadius;
+                // will result in F12 = F12/(4*cloudRadius^2) for radii_ratio = 2 :)
+                F12 = F12 * double( (1./32.)*pow(radii_ratio,4) - (9./16.)*radii_ratio*radii_ratio + radii_ratio ) / ( cloudRadius*cloudRadius );
+            } else
+                F12 = F12 / ( r*r );
+        }
+        
+        F += F12;
     }
-    return F12;
+    
+    return F;
 }
 
 inline double Energy( const Particle & particle1, const Particle & particle2, uint16_t colshape = DEFAULT_PARTICLE_SHAPE ) {
@@ -98,22 +125,15 @@ bool CheckBoundaryConditions( Particle & particle ) {
         if ( (particle.r[dim] < 0) or (particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) )
             outOfBounds = true;
 
+        #if BOUNDARY_CONDITION == 0
         /* Periodic Boundary Conditions */
-        /*if (particle.r[dim] < 0) {
+        if (particle.r[dim] < 0) {
             particle.r[dim] += NUMBER_OF_CELLS[dim] * CELL_SIZE[dim];
         } else if (particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
             particle.r[dim] -= NUMBER_OF_CELLS[dim] * CELL_SIZE[dim]; //not safe for two cells at one push ! => courant criterium !
-        }*/
-
-        /* Adhering Boundary Condition */
-        /*if (particle.r[dim] < 0) {
-            particle.r[dim] = 0;
-            particle.p[dim] = 0;
-        } else if (particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
-            particle.r[dim] = 0;
-            particle.p[dim] = 0;
-        }*/
-
+        }
+        
+        #elif BOUNDARY_CONDITION == 1
         /* Reflecting Boundary Condition */
         // This will make an error, if a particle is out of bounds in more than one dimension !
         if (particle.r[dim] < 0) {
@@ -125,6 +145,18 @@ bool CheckBoundaryConditions( Particle & particle ) {
             particle.p[dim] *= -1;
             particle.r[dim] = NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] + (DELTA_T - t1) * ( particle.p[dim] / particle.m );
         }
+        
+        #elif BOUNDARY_CONDITION == 2
+        /* Adhering Boundary Condition */
+        if (particle.r[dim] < 0) {
+            particle.r[dim] = 0;
+            particle.p[dim] = 0;
+        } else if (particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
+            particle.r[dim] = 0;
+            particle.p[dim] = 0;
+        }
+        
+        #endif
     }
     return outOfBounds;
 }
@@ -335,7 +367,7 @@ int main(void) {
 
     uint32_t energiesOutsideRange = 0;
     uint16_t shape = 0;
-    const uint32_t numberOfRuns = 20*1000;
+    const uint32_t numberOfRuns = 20*100;
     for (uint32_t run = 0; run < 3*numberOfRuns; run++) {
         Particle electrons[NUMBER_OF_PARTICLES];
         for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++) {
@@ -396,7 +428,6 @@ int main(void) {
 
     const uint32_t printInterval   = 2000;
     const uint32_t fprintInterval  = 200;
-    const uint32_t NUMBER_OF_STEPS = 1e6;
 
     // Initialize Verlet Integration (Leapfrog): shift momentum half a time step
     Verlet( NUMBER_OF_PARTICLES, electrons, DELTA_T, true);

@@ -5,6 +5,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("rundir", help="Directory which contains 'simOutput'")
+parser.add_argument("-a", "--saveani", help="save animation of 2D Simulation", action="store_true")
 args = parser.parse_args()
 
 # loadtext always loads the file row-wise in an array data[0] being the first row
@@ -12,7 +13,7 @@ args = parser.parse_args()
 # Energy Distributions for unformly random start positions
 
 figure()
-data = loadtxt( str(args.rundir)+"/CellEnergies.dat", dtype='float', comments='#')
+data = genfromtxt( str(args.rundir)+"/CellEnergies.dat", dtype='float', comments='#' )
 step( data[0],data[1], where='mid', label="Coulomb" )
 step( data[0],data[2], where='mid', label="Spheres" )
 step( data[0],data[3], where='mid', label="CIC" )
@@ -21,24 +22,51 @@ legend()
 # E,T,L,V,P for random initial positions going into quilibrium through stopping
 
 figure()
-data = loadtxt( str(args.rundir)+"/stats.dat", dtype='float', comments='#').transpose() # transpose because we want the data column-wise
+dir = str(args.rundir)
+data = genfromtxt( str(args.rundir)+"/stats.dat", dtype='float', comments='#', skip_footer=1 ).transpose() # transpose because we want the data column-wise
 # t	E/keV	V/keV	L/(m*kg*m/s)	P/(kg*m/s)
-plot( data[0],data[1]/data[1][-1], label="E/%e" % (data[1][-1]) )
-plot( data[0],data[2]/data[2][-1], label="V/%e" % (data[2][-1]) )
-plot( data[0],data[3]/data[3][-1], label="L/%e" % (data[3][-1]) )
-plot( data[0],data[4]/data[4][-1], label="P/%e" % (data[4][-1]) )
-legend()
+subplot(321)
+xlabel("t/s")
+ylabel("E/keV")
+# t	E/keV	V/keV	L/(m*kg*m/s)	P/(kg*m/s)
+plot( data[0],data[1], label=dir )
+legend( loc = 'upper left', prop = {'size':9} )
+
+subplot(322)
+xlabel("t/s")
+ylabel("V/keV")
+plot( data[0],data[2], label=dir )
+legend( loc = 'upper left', prop = {'size':9} )
+
+subplot(323)
+xlabel("t/s")
+ylabel("T/keV")
+plot( data[0],data[1]-data[2], label=dir )
+legend( loc = 'upper left', prop = {'size':9} )
+
+subplot(324)
+xlabel("t/s")
+ylabel("L/keV")
+plot( data[0],data[3], label=dir )
+legend( loc = 'upper left', prop = {'size':9} )
+
+subplot(325)
+xlabel("t/s")
+ylabel("P/keV")
+plot( data[0],data[4], label=dir )
+legend( loc = 'upper left', prop = {'size':9} )
 
 # Last configuration in Simulation
 
-data  = loadtxt( str(args.rundir)+"/simdata.dat", dtype='float', comments='#' )
+data  = genfromtxt( str(args.rundir)+"/simdata.dat", dtype='float', comments='#', skip_footer=1 )
 figure()
 plot( data[-2], data[-1], "bo" )
 
 # Animation
 
-data  = loadtxt( str(args.rundir)+"/simdata.dat", dtype='float', comments='#' )
 fig   = figure()
+DPI   = fig.get_dpi()
+fig.set_size_inches( 800.0/float(DPI), 600.0/float(DPI) )
 ax    = axes(xlim=(0, 1), ylim=(0, 1))
 scatter, = ax.plot( data[0], data[1], "bo" )
 def init():
@@ -50,6 +78,8 @@ def animate(i):
 # call the animator.  blit=True means only re-draw the parts that have changed.
 anim = animation.FuncAnimation(fig, animate, init_func=init,
                                frames=len(data[:,1])/2, interval=20, blit=True)
+if args.saveani:
+    anim.save( str(args.rundir)+"/Simulation2D60fps.mp4", fps=60, dpi=(DPI/800.*1920.), extra_args=['-vcodec', 'libx264'])
 
 show()
 exit()
