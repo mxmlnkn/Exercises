@@ -38,6 +38,12 @@ struct Particle {
 };
 
 inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & particle2, uint16_t colshape = DEFAULT_PARTICLE_SHAPE ) {
+    // if not in same cell, then force is 0
+    if ( floor( particle1.r.x / CELL_SIZE_X ) != floor( particle2.r.x / CELL_SIZE_X )
+      or floor( particle1.r.y / CELL_SIZE_Y ) != floor( particle2.r.y / CELL_SIZE_Y )
+      or floor( particle1.r.z / CELL_SIZE_Z ) != floor( particle2.r.z / CELL_SIZE_Z ) )
+        return Vec(0,0,0);
+
     /* Force felt by Particle 1, because it moves in the field of Particle 2 *
      * If sgn(q1) = sgn(q2 ) and x1 = 0, x2 > 0 => force should point to     *
      * negative x-axis direction. r12 = x1-x2 < 0, rest is positive => true  */
@@ -90,23 +96,27 @@ inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & 
 }
 
 inline double Energy( const Particle & particle1, const Particle & particle2, uint16_t colshape = DEFAULT_PARTICLE_SHAPE ) {
-    const double cellWidth = CELL_SIZE_X;
-    const Vec r12  = particle1.r - particle2.r;
-    const double r = r12.norm();
+    const double cloudRadius = CELL_SIZE_X / 2.0;
+    const Vec r12            = particle1.r - particle2.r;
+    const double r           = r12.norm();
     // for two positive charges the potential energy is supposed to increase for smaller distances, meaning the particles slow down
     double V = particle1.q * particle2.q / ( 4.*M_PI*EPS0 );
 
     if (colshape == 99) {
-        if (r < cellWidth)
-            // r=cellWidth => V = 1/cellWidth => continuous
-            V *= 2./cellWidth - r/(cellWidth*cellWidth);
+        if (r < 2*cloudRadius)
+            // r=2*cloudRadius => V = 1/(2*cloudRadius) => continuous
+            V *= 1./cloudRadius - r/(4.*cloudRadius*cloudRadius);
+        else
+            V = V / r;
     } else if (colshape == 0)
         V = V / r;
     else if( colshape == 1) {
-        const double radii_ratio = r / ( cellWidth/2.0 );
-        if (r < cellWidth)
-            // r=cellWidth => radii_ratio=2 => V = 1/cellWidth (correct :) )
-            V *= (192. - 80. * pow(radii_ratio,2) + 30 * pow(radii_ratio,3) - pow(radii_ratio,5) ) / (160.*cellWidth/2.0);
+        const double radii_ratio = r / cloudRadius;
+        if (r < 2*cloudRadius)
+            // r=2*cloudRadius => radii_ratio=2 => V = 1/(2*cloudRadius) (correct :) )
+            V *= (192. - 80. * pow(radii_ratio,2) + 30 * pow(radii_ratio,3) - pow(radii_ratio,5) ) / (160.*cloudRadius);
+        else
+            V = V / r;
     }
     return V;
 }
@@ -119,46 +129,59 @@ inline double Energy( const Particle & particle1, const Particle & particle2, ui
  * and clear the momentum of that direction like a infinitely small elastic   *
  * coefficient                                                                */
 bool CheckBoundaryConditions( Particle & particle ) {
-    bool outOfBounds = false;
+    uint16_t outOfBounds = 0;
     // Cycle through all (max. 3) dimensions
     for (uint16_t dim = 0; dim < SIMDIM; dim++) {
         if ( (particle.r[dim] < 0) or (particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) )
-            outOfBounds = true;
+            outOfBounds++;
 
-        #if BOUNDARY_CONDITION == 0
-        /* Periodic Boundary Conditions */
-        if (particle.r[dim] < 0) {
-            particle.r[dim] += NUMBER_OF_CELLS[dim] * CELL_SIZE[dim];
-        } else if (particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
-            particle.r[dim] -= NUMBER_OF_CELLS[dim] * CELL_SIZE[dim]; //not safe for two cells at one push ! => courant criterium !
+        if (BOUNDARY_CONDITION == 0) {
+            /* Periodic Boundary Conditions */
+            if (particle.r[dim] < 0) {
+                particle.r[dim] += NUMBER_OF_CELLS[dim] * CELL_SIZE[dim];
+            } else if (particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
+                particle.r[dim] -= NUMBER_OF_CELLS[dim] * CELL_SIZE[dim]; //not safe for two cells at one push ! => courant criterium !
+            }
         }
         
-        #elif BOUNDARY_CONDITION == 1
-        /* Reflecting Boundary Condition */
-        // This will make an error, if a particle is out of bounds in more than one dimension !
-        if (particle.r[dim] < 0) {
-            double t1 = ( 0 - particle.r[dim] ) / ( particle.p[dim] / particle.m );
-            particle.p[dim] *= -1;
-            particle.r[dim] = 0 + (DELTA_T - t1) * ( particle.p[dim] / particle.m );
-        } else if (particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
-            double t1 = ( particle.r[dim] - NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) / ( particle.p[dim] / particle.m );
-            particle.p[dim] *= -1;
-            particle.r[dim] = NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] + (DELTA_T - t1) * ( particle.p[dim] / particle.m );
+        else if (BOUNDARY_CONDITION == 1) {
+            /* Reflecting Boundary Condition */
+            // This will make an error, if a particle is out of bounds in more than one dimension !
+            if (particle.r[dim] < 0) {
+                const double v  = particle.p[dim] / particle.m;
+                const double t1 = ( particle.r[dim] - 0 ) / v;
+                assert(v < 0);
+                assert(t1 > 0);
+                assert(t1 < DELTA_T);
+                particle.p[dim] *= -1;
+                particle.r[dim] = 0 + (DELTA_T - t1) * (-v);
+                assert( particle.r[dim] < 0.5 * NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] );
+            } else if ( particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
+                const double v  = particle.p[dim] / particle.m;
+                const double t1 = ( particle.r[dim] - NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) / v;
+                assert(v > 0);
+                assert(t1 > 0);
+                assert(t1 < DELTA_T);
+                particle.p[dim] *= -1;
+                particle.r[dim] = NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] - (DELTA_T - t1) * v;
+                assert( particle.r[dim] > 0.5 * NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] );
+            }
         }
         
-        #elif BOUNDARY_CONDITION == 2
-        /* Adhering Boundary Condition */
-        if (particle.r[dim] < 0) {
-            particle.r[dim] = 0;
-            particle.p[dim] = 0;
-        } else if (particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
-            particle.r[dim] = 0;
-            particle.p[dim] = 0;
+        else if (BOUNDARY_CONDITION == 2) {
+            /* Adhering Boundary Condition */
+            if (particle.r[dim] < 0) {
+                particle.r[dim] = 0;
+                particle.p[dim] = 0;
+            } else if (particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
+                particle.r[dim] = 0;
+                particle.p[dim] = 0;
+            }
         }
-        
-        #endif
     }
-    return outOfBounds;
+    if (outOfBounds > 1 and BOUNDARY_CONDITION == 1)
+        printf("Double Reflexion at one of the corners or edges => Trajectory non-physical!\n");
+    return outOfBounds > 0;
 }
 
 void Verlet( const uint32_t NUMBER_OF_PARTICLES, Particle particle[], const double dt, bool initialize = false ) {
@@ -177,7 +200,6 @@ void Verlet( const uint32_t NUMBER_OF_PARTICLES, Particle particle[], const doub
     for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++)
         //Calculate Net Force on Particle i
         for (uint32_t j = 0; j < i; j++) {
-            if (i==j) continue;
             // this part relativistically ...
             const Vec dp12 = ForceActingOnParticle1( particle[i], particle[j] ) * DELTA_T;
             particle[i].dp += dp12;
@@ -234,31 +256,32 @@ void Verlet( const uint32_t NUMBER_OF_PARTICLES, Particle particle[], const doub
     return;
 }
 
-double CalcTotalEnergy( const unsigned int particleCount, struct Particle particle[], uint16_t colshape = DEFAULT_PARTICLE_SHAPE ) {
-    double E = 0;
-    for (unsigned int i = 0; i < particleCount; i++) {
-        double p = particle[i].p.norm();
-        double T = p*p / (2.0 * particle[i].m);
-        double V = 0;
-        for (unsigned int j = 0; j < i; j++)
-            V += Energy( particle[i], particle[j], colshape );
-        E += T + V;
-    }
-    return E;
+double CalcTotalKineticEnergy( const unsigned int particleCount, Particle particle[] ) {
+    double T = 0;
+    for (unsigned int i = 0; i < particleCount; i++)
+        T += particle[i].p.norm2() / (2.0 * particle[i].m);
+    return T;
 }
 
-double CalcTotalPotentialEnergy( const unsigned int particleCount, struct Particle particle[], uint16_t colshape = DEFAULT_PARTICLE_SHAPE ) {
+double CalcTotalPotentialEnergy( const unsigned int particleCount, Particle particle[], uint16_t colshape = DEFAULT_PARTICLE_SHAPE ) {
     double E = 0;
+    #pragma omp parallel for
     for (unsigned int i = 0; i < particleCount; i++) {
         double V = 0;
-        for (unsigned int j = 0; j < i; j++)
-            V += Energy( particle[i], particle[j], colshape );
+        for (unsigned int j = 0; j < i; j++) {
+            // only if in same cell
+            if ( floor( particle[i].r.x / CELL_SIZE_X ) == floor( particle[j].r.x / CELL_SIZE_X )
+             and floor( particle[i].r.y / CELL_SIZE_Y ) == floor( particle[j].r.y / CELL_SIZE_Y )
+             and floor( particle[i].r.z / CELL_SIZE_Z ) == floor( particle[j].r.z / CELL_SIZE_Z ) )
+                V += Energy( particle[i], particle[j], colshape );
+        }
+        #pragma omp atomic
         E += V;
     }
     return E;
 }
 
-double CalcTotalAngularMomentum( const unsigned int particleCount, struct Particle particle[] ) {
+double CalcTotalAngularMomentum( const unsigned int particleCount, Particle particle[] ) {
     Vec L;
     for (unsigned int i = 0; i < particleCount; i++) {
         L.x += particle[i].r.y * particle[i].p.z - particle[i].r.z * particle[i].p.y;
@@ -268,7 +291,7 @@ double CalcTotalAngularMomentum( const unsigned int particleCount, struct Partic
     return L.norm();
 }
 
-double CalcTotalMomentum( const unsigned int particleCount, struct Particle particle[] ) {
+double CalcTotalMomentum( const unsigned int particleCount, Particle particle[] ) {
     Vec P;
     for (unsigned int i = 0; i < particleCount; i++) {
         P.x += particle[i].p.x;
@@ -352,6 +375,8 @@ int main(void) {
     printf("CELL_SIZE_SI         : %e\n",CELL_SIZE_SI);
     printf("CELL_SIZE            : %e\n",CELL_SIZE_SI / UNIT_LENGTH);
     printf("NUMBER_OF_CELLS_X    : %d\n",NUMBER_OF_CELLS_X);
+    printf("NUMBER_OF_CELLS_Y    : %d\n",NUMBER_OF_CELLS_Y);
+    printf("NUMBER_OF_CELLS_Z    : %d\n",NUMBER_OF_CELLS_Z);
     printf("DELTA_T_SI           : %e\n",DELTA_T_SI);
     printf("UNIT_ENERGY          : %e\n",UNIT_ENERGY);
     printf("UNIT_MOMENTUM        : %e\n",UNIT_MOMENTUM);
@@ -359,7 +384,7 @@ int main(void) {
     printf("ELECTRON_MASS        : %e\n",ELECTRON_MASS);
     printf("\n");
 
-    DataBinPlot<double> binCellEnergies( 2., 6., 100, "CellEnergies.dat" ); // 50 bins ranging from 3 keV to 6 keV
+    DataBinPlot<double> binCellEnergies( .08, .24, 100, "CellEnergies.dat" ); // 50 bins ranging from 3 keV to 6 keV per Cell
 
     srand(time(NULL));
 
@@ -381,10 +406,10 @@ int main(void) {
             electrons[i].p.z = 0;
         }
 
-        double E = CalcTotalEnergy( NUMBER_OF_PARTICLES, electrons, shape );
-        //printf("%e\n", E*UNIT_ENERGY*UNITCONV_Joule_to_keV);
+        double E = CalcTotalPotentialEnergy( NUMBER_OF_PARTICLES, electrons, shape ) / 
+                   ( NUMBER_OF_PARTICLES_PER_CELL*NUMBER_OF_CELLS_X*NUMBER_OF_CELLS_Y*NUMBER_OF_CELLS_Z );
+        //printf("E:%e\n", E*UNIT_ENERGY*UNITCONV_Joule_to_keV);
 
-        //printf( "%e\t\n", E*UNIT_ENERGY*UNITCONV_Joule_to_keV );
         bool inRange = binCellEnergies.addData( E*UNIT_ENERGY*UNITCONV_Joule_to_keV );
         if (!inRange) energiesOutsideRange++;
 
@@ -401,7 +426,7 @@ int main(void) {
         }
     }
 
-    // Find the lowest Energy configuration
+    // Find the lowest Energy configuration: adjust Verlt with p *= 0.9999
 
     // Open log file
     FILE * simdata = NULL;
@@ -435,10 +460,11 @@ int main(void) {
         Verlet( NUMBER_OF_PARTICLES, electrons, DELTA_T );
 
         if ((currentStep % fprintInterval == 0) or (currentStep % printInterval == 0)) {
-            const double E = CalcTotalEnergy         ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
+            const double T = CalcTotalKineticEnergy  ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double V = CalcTotalPotentialEnergy( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double L = CalcTotalAngularMomentum( NUMBER_OF_PARTICLES, electrons ) * UNIT_ANGULAR_MOMENTUM;
             const double P = CalcTotalMomentum       ( NUMBER_OF_PARTICLES, electrons ) * UNIT_MOMENTUM;
+            const double E = T + V;
             if (currentStep % fprintInterval == 0) {
                 fprintf( stats, "%e\t%e\t%e\t%e\t%e\n", currentStep * DELTA_T_SI, E, V, L, P);
                 for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++)

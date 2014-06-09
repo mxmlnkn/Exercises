@@ -67,7 +67,7 @@ plot( data[-2], data[-1], "bo" )
 fig   = figure()
 DPI   = fig.get_dpi()
 fig.set_size_inches( 800.0/float(DPI), 600.0/float(DPI) )
-ax    = axes(xlim=(0, 1), ylim=(0, 1))
+ax    = axes()#xlim=(0, 1), ylim=(0, 1))
 scatter, = ax.plot( data[0], data[1], "bo" )
 def init():
     scatter.set_data([],[])

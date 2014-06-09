@@ -19,6 +19,7 @@ public:
     bool operator== (const Vec v) const;
     bool operator!= (const Vec v) const;
     double norm() const;
+    double norm2() const;
 };
 double & Vec::operator[] (const uint16_t i) {
     switch (i) {
@@ -79,10 +80,14 @@ inline bool Vec::operator!= (const Vec v) const {
     return !((*this) == v);
 }
 double Vec::norm() const {
+    double res = sqrt((*this).norm2());
+    return res;
+}
+double Vec::norm2() const {
     assert( this->x == this->x );
     assert( this->y == this->y );
     assert( this->z == this->z );
-    double res = sqrt(this->x * this->x + this->y * this->y + this->z * this->z);
+    double res = this->x * this->x + this->y * this->y + this->z * this->z;
     assert( res == res );
     return res;
 }
