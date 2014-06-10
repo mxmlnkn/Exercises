@@ -10,6 +10,10 @@
  *   - using more particles see them taking on maxwell distribution (fit)     *
  *   - make work for 3D                                                       *
  *   - seed with maxwell temperature                                          *
+ *   - make double or triple reflexions work in reflect boundary condition    *
+ *   - ensure momentum conservation for reflecting boundaries in one cell     *
+ *     by also giving the simulation box a velocity !                         *
+ *   - look why momentum rises, but kinetic energy is constant ...            *
  ******************************************************************************/
 
 #include <stdio.h>
@@ -20,6 +24,7 @@
 #include <assert.h>
 #include <omp.h>
 #include <iostream>
+#include <fstream>
 
 #define DEBUG 1
 
@@ -27,6 +32,30 @@ using namespace std;
 
 #include "Vector.cpp"
 #include "Parameters.cpp"
+
+class teeStream{
+    public:
+        ofstream fileStream;
+        teeStream( const char * filename ) {
+            fileStream.open( filename, std::ofstream::out | std::ofstream::app );
+        }
+        ~teeStream(void) {
+            fileStream.close();
+        }
+        template <class T> teeStream& operator<< (T val) {
+            fileStream << val;
+            cout << val;
+            fileStream.flush();
+            return *this;
+        }
+        teeStream& operator<< (ostream& (*pfun)(ostream&)) {
+            pfun(fileStream);
+            pfun(cout);
+            return *this;
+        }
+};
+
+teeStream tout("output.txt");
 
 const uint16_t STEPS_TO_REMEMBER = 2;
 struct Particle {
@@ -39,10 +68,11 @@ struct Particle {
 
 inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & particle2, uint16_t colshape = DEFAULT_PARTICLE_SHAPE ) {
     // if not in same cell, then force is 0
-    if ( floor( particle1.r.x / CELL_SIZE_X ) != floor( particle2.r.x / CELL_SIZE_X )
-      or floor( particle1.r.y / CELL_SIZE_Y ) != floor( particle2.r.y / CELL_SIZE_Y )
-      or floor( particle1.r.z / CELL_SIZE_Z ) != floor( particle2.r.z / CELL_SIZE_Z ) )
-        return Vec(0,0,0);
+    if (!FULL_N_SQUARED_FORCE)
+        if ( floor( particle1.r.x / CELL_SIZE_X ) != floor( particle2.r.x / CELL_SIZE_X )
+          or floor( particle1.r.y / CELL_SIZE_Y ) != floor( particle2.r.y / CELL_SIZE_Y )
+          or floor( particle1.r.z / CELL_SIZE_Z ) != floor( particle2.r.z / CELL_SIZE_Z ) )
+            return Vec(0,0,0);
 
     /* Force felt by Particle 1, because it moves in the field of Particle 2 *
      * If sgn(q1) = sgn(q2 ) and x1 = 0, x2 > 0 => force should point to     *
@@ -180,7 +210,7 @@ bool CheckBoundaryConditions( Particle & particle ) {
         }
     }
     if (outOfBounds > 1 and BOUNDARY_CONDITION == 1)
-        printf("Double Reflexion at one of the corners or edges => Trajectory non-physical!\n");
+        tout << "Double Reflexion at one of the corners or edges => Trajectory non-physical!\n";
     return outOfBounds > 0;
 }
 
@@ -302,11 +332,6 @@ double CalcTotalMomentum( const unsigned int particleCount, Particle particle[] 
 }
 
 
-struct return_data {
-    double theta_max, theta_max_calc, rmin, rmin_calc;
-};
-
-
 template<typename T_Datatype>
 class DataBinPlot {
     T_Datatype min, max;
@@ -369,20 +394,20 @@ public:
 };
 
 int main(void) {
-    printf("MUE0                 : %e\n",MUE0);
-    printf("EPS0                 : %e\n",EPS0);
-    printf("SPEED_OF_LIGHT       : %e\n",SPEED_OF_LIGHT);
-    printf("CELL_SIZE_SI         : %e\n",CELL_SIZE_SI);
-    printf("CELL_SIZE            : %e\n",CELL_SIZE_SI / UNIT_LENGTH);
-    printf("NUMBER_OF_CELLS_X    : %d\n",NUMBER_OF_CELLS_X);
-    printf("NUMBER_OF_CELLS_Y    : %d\n",NUMBER_OF_CELLS_Y);
-    printf("NUMBER_OF_CELLS_Z    : %d\n",NUMBER_OF_CELLS_Z);
-    printf("DELTA_T_SI           : %e\n",DELTA_T_SI);
-    printf("UNIT_ENERGY          : %e\n",UNIT_ENERGY);
-    printf("UNIT_MOMENTUM        : %e\n",UNIT_MOMENTUM);
-    printf("UNIT_ANGULAR_MOMENTUM: %e\n",UNIT_ANGULAR_MOMENTUM);
-    printf("ELECTRON_MASS        : %e\n",ELECTRON_MASS);
-    printf("\n");
+    tout << "MUE0                 : " << MUE0                       << "\n";
+    tout << "EPS0                 : " << EPS0                       << "\n";
+    tout << "SPEED_OF_LIGHT       : " << SPEED_OF_LIGHT             << "\n";
+    tout << "CELL_SIZE_SI         : " << CELL_SIZE_SI               << "\n";
+    tout << "CELL_SIZE            : " << CELL_SIZE_SI / UNIT_LENGTH << "\n";
+    tout << "NUMBER_OF_CELLS_X    : " << NUMBER_OF_CELLS_X          << "\n";
+    tout << "NUMBER_OF_CELLS_Y    : " << NUMBER_OF_CELLS_Y          << "\n";
+    tout << "NUMBER_OF_CELLS_Z    : " << NUMBER_OF_CELLS_Z          << "\n";
+    tout << "DELTA_T_SI           : " << DELTA_T_SI                 << "\n";
+    tout << "UNIT_ENERGY          : " << UNIT_ENERGY                << "\n";
+    tout << "UNIT_MOMENTUM        : " << UNIT_MOMENTUM              << "\n";
+    tout << "UNIT_ANGULAR_MOMENTUM: " << UNIT_ANGULAR_MOMENTUM      << "\n";
+    tout << "ELECTRON_MASS        : " << ELECTRON_MASS              << "\n";
+    tout << "\n";
 
     DataBinPlot<double> binCellEnergies( .08, .24, 100, "CellEnergies.dat" ); // 50 bins ranging from 3 keV to 6 keV per Cell
 
@@ -408,7 +433,7 @@ int main(void) {
 
         double E = CalcTotalPotentialEnergy( NUMBER_OF_PARTICLES, electrons, shape ) / 
                    ( NUMBER_OF_PARTICLES_PER_CELL*NUMBER_OF_CELLS_X*NUMBER_OF_CELLS_Y*NUMBER_OF_CELLS_Z );
-        //printf("E:%e\n", E*UNIT_ENERGY*UNITCONV_Joule_to_keV);
+        //tout << "E:" << E*UNIT_ENERGY*UNITCONV_Joule_to_keV << "\n";
 
         bool inRange = binCellEnergies.addData( E*UNIT_ENERGY*UNITCONV_Joule_to_keV );
         if (!inRange) energiesOutsideRange++;
@@ -419,7 +444,7 @@ int main(void) {
                 shape = 99;
             else
                 shape = 1;
-            printf( "Number of Runs: %d, Energies not in specified Range: %d\n", numberOfRuns, energiesOutsideRange );
+            tout << "Number of Runs: " << numberOfRuns << ", Energies not in specified Range: " << energiesOutsideRange << "\n";
             energiesOutsideRange = 0;
             binCellEnergies.writeToFile();
             binCellEnergies.clearData();
@@ -436,7 +461,7 @@ int main(void) {
 
     FILE * stats = NULL;
     stats = fopen ("stats.dat","w");
-    fprintf( stats, "# t\tE/keV\tV/keV\tL/(m*kg*m/s)\tP/(kg*m/s)\n" );
+    fprintf( stats, "# t\tE/keV\tV/keV\tL/(m*kg*m/s)\tP/(kg*m/s)\tT/keV\n" );
     assert(stats != NULL);
 
     Particle electrons[NUMBER_OF_PARTICLES];
@@ -466,7 +491,7 @@ int main(void) {
             const double P = CalcTotalMomentum       ( NUMBER_OF_PARTICLES, electrons ) * UNIT_MOMENTUM;
             const double E = T + V;
             if (currentStep % fprintInterval == 0) {
-                fprintf( stats, "%e\t%e\t%e\t%e\t%e\n", currentStep * DELTA_T_SI, E, V, L, P);
+                fprintf( stats, "%e\t%e\t%e\t%e\t%e\t%e\n", currentStep * DELTA_T_SI, E, V, L, P, T);
                 for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++)
                     fprintf( simdata, "%e\t", electrons[i].r.x );
                 fprintf( simdata, "\n" );
@@ -475,7 +500,7 @@ int main(void) {
                 fprintf( simdata, "\n" );
             }
             if (currentStep % printInterval == 0)
-                printf( "time: %e (%3.0f%%), E: %e, V: %e, L: %e, P:%e\n", currentStep * DELTA_T_SI, 100*(double)currentStep/(double)NUMBER_OF_STEPS, E, V, L, P);
+                tout << "time: " << currentStep * DELTA_T_SI << " (" << 100*(double)currentStep/(double)NUMBER_OF_STEPS << "%), E: " << E << ", V: " << V << ", L: " << L << ", P:" << P << "\n";
         }
     }
 

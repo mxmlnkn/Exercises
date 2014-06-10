@@ -8,9 +8,9 @@ parser.add_argument("rundir", help="Directory which contains 'simOutput'")
 parser.add_argument("-a", "--saveani", help="save animation of 2D Simulation", action="store_true")
 args = parser.parse_args()
 
-# loadtext always loads the file row-wise in an array data[0] being the first row
+# loadtext/genfromtxt always loads the file row-wise in an array data[0] being the first row
 
-# Energy Distributions for unformly random start positions
+# Energy Distributions for uniformly random start positions
 
 figure()
 data = genfromtxt( str(args.rundir)+"/CellEnergies.dat", dtype='float', comments='#' )
@@ -41,7 +41,7 @@ legend( loc = 'upper left', prop = {'size':9} )
 subplot(323)
 xlabel("t/s")
 ylabel("T/keV")
-plot( data[0],data[1]-data[2], label=dir )
+plot( data[0],data[5], label=dir )
 legend( loc = 'upper left', prop = {'size':9} )
 
 subplot(324)

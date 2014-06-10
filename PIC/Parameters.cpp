@@ -2,6 +2,7 @@
 const uint16_t SIMDIM                 = 2;
 const uint16_t NUMBER_OF_NEIGHBORS    = 0;  //Neighboring Cells to be included for periodic Force. 0 means no periodic summation
 const uint32_t NUMBER_OF_STEPS        = 1e7;
+const bool FULL_N_SQUARED_FORCE       = false;
 
 //GasConfig.param
 const double GAS_DENSITY_SI           = 1.e30; // 1/m^3
