@@ -10,10 +10,15 @@
  *   - using more particles see them taking on maxwell distribution (fit)     *
  *   - make work for 3D                                                       *
  *   - seed with maxwell temperature                                          *
- *   - make double or triple reflexions work in reflect boundary condition    *
  *   - ensure momentum conservation for reflecting boundaries in one cell     *
  *     by also giving the simulation box a velocity !                         *
  *   - look why momentum rises, but kinetic energy is constant ...            *
+ *       P^2 = (p1+p2+p3+..)^2 !~ Ekin ~ p1^2+p2^2+p3^2+.. (difference 2p1p2) *
+ *   - use also protons => will that attenuate the error for energy           *
+ *     conservation by itself?                                                *
+ *   - when calculating forces of neighbors, sum up beginning with smallest   *
+ *     force to minimize numeric roundoff errors                              *
+ *   - use particle lists per cell -> implement cell change in CheckBoundary  *
  ******************************************************************************/
 
 #include <stdio.h>
@@ -176,25 +181,12 @@ bool CheckBoundaryConditions( Particle & particle ) {
         
         else if (BOUNDARY_CONDITION == 1) {
             /* Reflecting Boundary Condition */
-            // This will make an error, if a particle is out of bounds in more than one dimension !
             if (particle.r[dim] < 0) {
-                const double v  = particle.p[dim] / particle.m;
-                const double t1 = ( particle.r[dim] - 0 ) / v;
-                assert(v < 0);
-                assert(t1 > 0);
-                assert(t1 < DELTA_T);
                 particle.p[dim] *= -1;
-                particle.r[dim] = 0 + (DELTA_T - t1) * (-v);
-                assert( particle.r[dim] < 0.5 * NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] );
+                particle.r[dim] = 0 + ( 0 - particle.r[dim] );
             } else if ( particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
-                const double v  = particle.p[dim] / particle.m;
-                const double t1 = ( particle.r[dim] - NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) / v;
-                assert(v > 0);
-                assert(t1 > 0);
-                assert(t1 < DELTA_T);
                 particle.p[dim] *= -1;
-                particle.r[dim] = NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] - (DELTA_T - t1) * v;
-                assert( particle.r[dim] > 0.5 * NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] );
+                particle.r[dim] = NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] - (particle.r[dim] - NUMBER_OF_CELLS[dim] * CELL_SIZE[dim]);
             }
         }
         
@@ -209,8 +201,6 @@ bool CheckBoundaryConditions( Particle & particle ) {
             }
         }
     }
-    if (outOfBounds > 1 and BOUNDARY_CONDITION == 1)
-        tout << "Double Reflexion at one of the corners or edges => Trajectory non-physical!\n";
     return outOfBounds > 0;
 }
 

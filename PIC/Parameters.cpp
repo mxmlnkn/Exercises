@@ -15,8 +15,8 @@ const double MUE0_SI                  = M_PI * 4.e-7;     // N/A^2 = kg*m/C^2
 const double EPS0_SI                  = 1.0/(MUE0_SI*SPEED_OF_LIGHT_SI*SPEED_OF_LIGHT_SI);    // C^2/J*m, 8.854187817e-12
 
 //particleConfig.param
-const double ELECTRON_TEMPERATURE_keV = 0.1;
-const double ION_TEMPERATURE_keV      = 0.1;
+const double ELECTRON_TEMPERATURE_keV = 0.0;
+const double ION_TEMPERATURE_keV      = 0.0;
 const double ELECTRON_MASS_SI         = 9.109382e-31;         // kg
 const double ELECTRON_CHARGE_SI       =-ELEMENTARY_CHARGE_SI; // C
 const double ION_MASS_SI              = PROTON_MASS_SI;       // kg
