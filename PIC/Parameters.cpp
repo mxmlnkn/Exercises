@@ -1,9 +1,9 @@
 //componentsConfig.param
 const uint16_t SIMDIM                 = 2;
-const uint16_t NUMBER_OF_NEIGHBORS    = 0;  //Neighboring Cells to be included for periodic Force. 0 means no periodic summation
+const double CONSIDERATION_RATIO      = 1.0;  // Force between particles will be calculated if distance between those two is smaller than CONSIDERATION_RATIO * CELL_SIZE
 const uint32_t NUMBER_OF_STEPS        = 1e7;
-const bool FULL_N_SQUARED_FORCE       = false;
-
+const bool FULL_N_SQUARED_FORCE       = false; // if false, then force is calculated only with the particles in the same cell
+const uint32_t RANDOM_SEED            = 43907340; //if 0, then time() is used
 //GasConfig.param
 const double GAS_DENSITY_SI           = 1.e30; // 1/m^3
 
@@ -21,19 +21,25 @@ const double ELECTRON_MASS_SI         = 9.109382e-31;         // kg
 const double ELECTRON_CHARGE_SI       =-ELEMENTARY_CHARGE_SI; // C
 const double ION_MASS_SI              = PROTON_MASS_SI;       // kg
 const double ION_CHARGE_SI            = ELEMENTARY_CHARGE_SI; // C
-const uint32_t NUMBER_OF_PARTICLES_PER_CELL = 25;   // NUM instead of NUMBER_OF in picongpu is also inconsistent, and there are other longer names, soo ...
+const uint32_t NUMBER_OF_PARTICLES_PER_CELL = 26;   // NUM instead of NUMBER_OF in picongpu is also inconsistent, and there are other longer names, soo ...
 const uint16_t DEFAULT_PARTICLE_SHAPE = 1;  //00:point-point, 01:ball-ball (CIC radialsymmetric equivalent), 99:sphere-sphere    
 
 //GridConfig.param
-const double DELTA_T_SI               = 1.5e-20;
-const uint32_t NUMBER_OF_CELLS_X      = 2;
-const uint32_t NUMBER_OF_CELLS_Y      = 2;
+const double DELTA_T_SI               = 1.5e-19;
+const uint32_t NUMBER_OF_CELLS_X      = 1;
+const uint32_t NUMBER_OF_CELLS_Y      = 1;
 const uint32_t NUMBER_OF_CELLS_Z      = 1;
 const double CELL_SIZE_SI             = pow( double(NUMBER_OF_PARTICLES_PER_CELL)/GAS_DENSITY_SI, 1./3. );
 const double CELL_SIZE_X_SI           = CELL_SIZE_SI;   // (!!!) picongpu naming with width, height and depth seems to be too random => could lead to mixups
 const double CELL_SIZE_Y_SI           = CELL_SIZE_SI;
 const double CELL_SIZE_Z_SI           = CELL_SIZE_SI;
 const uint16_t BOUNDARY_CONDITION     = 0;  //0:periodic, 1:reflecting, 2:adhering
+
+//output
+const uint32_t PRINT_INTERVAL          = 1000;
+const uint32_t PRINTF_INTERVAL         = 100;
+const uint32_t PRINTF_SIMDATA_INTERVAL = min( ceil( 1e-18 / DELTA_T_SI ), 1. );
+// for dt = 1e-19 => Nprint = 10. for 1e-17 it prints every time step, so that we can see something
 
 //================================== Units ===================================//
 const double UNITCONV_keV_to_Joule    = 1.e3 * ELEMENTARY_CHARGE_SI;
@@ -74,4 +80,5 @@ const double CELL_SIZE_X              = CELL_SIZE_X_SI / UNIT_LENGTH;
 const double CELL_SIZE_Y              = CELL_SIZE_Y_SI / UNIT_LENGTH;
 const double CELL_SIZE_Z              = CELL_SIZE_Z_SI / UNIT_LENGTH;
 const uint32_t CELL_SIZE[3]           = { CELL_SIZE_X, CELL_SIZE_Y, CELL_SIZE_Z };
+const uint32_t CELL_SIZE_MIN          = min( CELL_SIZE_X, min( CELL_SIZE_Y, CELL_SIZE_Z ) );
 const uint32_t NUMBER_OF_CELLS[3]     = { NUMBER_OF_CELLS_X, NUMBER_OF_CELLS_Y, NUMBER_OF_CELLS_Z };

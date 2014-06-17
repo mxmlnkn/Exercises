@@ -19,6 +19,10 @@
  *   - when calculating forces of neighbors, sum up beginning with smallest   *
  *     force to minimize numeric roundoff errors                              *
  *   - use particle lists per cell -> implement cell change in CheckBoundary  *
+ *   - F(r), V(r) output for all forces and for horizintal and diagonal dist. *
+ *   - cellwise lists to make more cells only linearly more demanding         *
+ *   - output electrons and ions separatedly                                  *
+ *   - calculate force in 3 different steps (clear, calc, apply)              *
  ******************************************************************************/
 
 #include <stdio.h>
@@ -74,10 +78,14 @@ struct Particle {
 inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & particle2, uint16_t colshape = DEFAULT_PARTICLE_SHAPE ) {
     // if not in same cell, then force is 0
     if (!FULL_N_SQUARED_FORCE)
+        // may not round to 3.0, but 3.00...1, but should still round to one and the same 3.00...1, so that they are comparable. If not, the C-standard and floor
         if ( floor( particle1.r.x / CELL_SIZE_X ) != floor( particle2.r.x / CELL_SIZE_X )
           or floor( particle1.r.y / CELL_SIZE_Y ) != floor( particle2.r.y / CELL_SIZE_Y )
-          or floor( particle1.r.z / CELL_SIZE_Z ) != floor( particle2.r.z / CELL_SIZE_Z ) )
+          or floor( particle1.r.z / CELL_SIZE_Z ) != floor( particle2.r.z / CELL_SIZE_Z ) ) {
+            if ( NUMBER_OF_CELLS_X * NUMBER_OF_CELLS_Y * NUMBER_OF_CELLS_Z == 1 )
+                tout << "ASSERT ERROR: Found particle outside of cell when calculating force, even though there is only 1 cell.\n";
             return Vec(0,0,0);
+          }
 
     /* Force felt by Particle 1, because it moves in the field of Particle 2 *
      * If sgn(q1) = sgn(q2 ) and x1 = 0, x2 > 0 => force should point to     *
@@ -98,31 +106,43 @@ inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & 
     const double alpha       = particle1.q * particle2.q / ( 4.*M_PI*EPS0 );
     Vec F(0,0,0);
     
-    // Loop about surrounding cells where the particle is also because of periodic boundary conditions 
-    // Try to find analytic formula for this ??? Like in solid state physics !
-    assert( SIMDIM == 2 );
-    for (int iPeriodY = -NUMBER_OF_NEIGHBORS; iPeriodY <= NUMBER_OF_NEIGHBORS; iPeriodY++)
-    for (int iPeriodX = -NUMBER_OF_NEIGHBORS; iPeriodX <= NUMBER_OF_NEIGHBORS; iPeriodX++) {
-        
-        const Vec r12  = particle1.r - ( particle2.r + Vec( iPeriodX * CELL_SIZE_X, iPeriodY * CELL_SIZE_Y, 0) );
+    // Loop over periodically continued simulation box i.e. Supercells, because this simulation only supports one supercell at a time with not so clearly separated cells
+    const uint16_t supercells_to_consider_X = int( ceil( CELL_SIZE_X * CONSIDERATION_RATIO / ( CELL_SIZE_X * CELL_SIZE_X ) ) + 0.1 );
+    const uint16_t supercells_to_consider_Y = int( ceil( CELL_SIZE_Y * CONSIDERATION_RATIO / ( CELL_SIZE_Y * CELL_SIZE_Y ) ) + 0.1 );
+    const uint16_t supercells_to_consider_Z = int( ceil( CELL_SIZE_Z * CONSIDERATION_RATIO / ( CELL_SIZE_Z * CELL_SIZE_Z ) ) + 0.1 );
+    const uint16_t supercells_to_consider   = max( supercells_to_consider_X, max( supercells_to_consider_Y, supercells_to_consider_Z ) );
+    
+    // if maxXYZ == 0, then the for loop is rendered basically useless
+    const uint16_t maxX = (SIMDIM >= 1) ? supercells_to_consider : 0;
+    const uint16_t maxY = (SIMDIM >= 2) ? supercells_to_consider : 0;
+    const uint16_t maxZ = (SIMDIM >= 3) ? supercells_to_consider : 0;
+    
+    for (int iPeriodZ = -maxZ; iPeriodZ <= maxZ; iPeriodZ++)
+    for (int iPeriodY = -maxY; iPeriodY <= maxY; iPeriodY++)
+    for (int iPeriodX = -maxX; iPeriodX <= maxX; iPeriodX++) {
+        // this is the only line changing in the loops 
+        const Vec r12  = particle1.r - ( particle2.r + Vec( iPeriodX * CELL_SIZE_X, iPeriodY * CELL_SIZE_Y, iPeriodZ * CELL_SIZE_Z) );
         const double r = r12.norm();
         Vec F12 = alpha * r12/r;
         
-        if (colshape == 99) {
-            if (r < 2.*cloudRadius)
-                F12 = F12 / ( 4.*cloudRadius*cloudRadius );
-            else
+        if( r < CELL_SIZE_MIN * CONSIDERATION_RATIO ) {
+            if (colshape == 99) {
+                if (r < 2.*cloudRadius)
+                    F12 = F12 / ( 4.*cloudRadius*cloudRadius );
+                else
+                    F12 = F12 / ( r*r );
+            } else if (colshape == 0) {
                 F12 = F12 / ( r*r );
-        } else if (colshape == 0) {
-            F12 = F12 / ( r*r );
-        } else if( colshape == 1) {
-            if (r < 2.*cloudRadius) {
-                const double radii_ratio = r/cloudRadius;
-                // will result in F12 = F12/(4*cloudRadius^2) for radii_ratio = 2 :)
-                F12 = F12 * double( (1./32.)*pow(radii_ratio,4) - (9./16.)*radii_ratio*radii_ratio + radii_ratio ) / ( cloudRadius*cloudRadius );
-            } else
-                F12 = F12 / ( r*r );
-        }
+            } else if( colshape == 1) {
+                if (r < 2.*cloudRadius) {
+                    const double radii_ratio = r/cloudRadius;
+                    // will result in F12 = F12/(4*cloudRadius^2) for radii_ratio = 2 :)
+                    F12 = F12 * double( (1./32.)*pow(radii_ratio,4) - (9./16.)*radii_ratio*radii_ratio + radii_ratio ) / ( cloudRadius*cloudRadius );
+                } else
+                    F12 = F12 / ( r*r );
+            }
+        } else
+            F12 *= 0;
         
         F += F12;
     }
@@ -160,7 +180,7 @@ inline double Energy( const Particle & particle1, const Particle & particle2, ui
  * time the position has been changed. Therefore would be nice to implement   *
  * this in all positions change routines, but then Vector.hpp wouldn't be     *
  * general anymore                                                            *
- * If some particles has left, then but it back to the wall in that dimension *
+ * If some particles has left, then put it back to the wall in that dimension *
  * and clear the momentum of that direction like a infinitely small elastic   *
  * coefficient                                                                */
 bool CheckBoundaryConditions( Particle & particle ) {
@@ -383,7 +403,62 @@ public:
     }
 };
 
+Vec getRelativeDirections(const uint32_t ex) {
+        Vec tmp(0,0,0);
+
+        switch (ex % 3) {
+        case 1:
+            tmp.x = 1;
+            break;
+        case 2:
+            tmp.x = -1;
+            break;
+        }
+
+        switch (ex / 3 % 3) {
+        case 1: /*BOTTOM*/
+            tmp.y = 1;
+            break;
+        case 2: /*TOP*/
+            tmp.y = -1;
+            break;
+        }
+
+        switch (ex / 3 / 3)  {
+        case 1: /*BACK*/
+            tmp.z = 1;
+            break;
+        case 2: /*FRONT*/
+            tmp.z = -1;
+            break;
+        }
+
+        return tmp;
+    }
+
+double CalcTotalKineticEnergyIons( const unsigned int particleCount, Particle particle[] ) {
+    double T = 0;
+    for (unsigned int i = 0; i < particleCount; i++)
+        if (particle[i].q > 0)
+            T += particle[i].p.norm2() / (2.0 * particle[i].m);
+    return T;
+}
+
+double CalcTotalKineticEnergyElectrons( const unsigned int particleCount, Particle particle[] ) {
+    double T = 0;
+    for (unsigned int i = 0; i < particleCount; i++)
+        if (particle[i].q < 0)
+            T += particle[i].p.norm2() / (2.0 * particle[i].m);
+    return T;
+}
+
 int main(void) {
+    /* for (uint16_t i = 0; i <= 27; i++) {
+        Vec tmp = getRelativeDirections( i );
+        printf( "direction:%u => (%i,%i,%i)\n", i, int(tmp.x), int(tmp.y), int(tmp.z) );
+    }
+    return 0; */
+
     tout << "MUE0                 : " << MUE0                       << "\n";
     tout << "EPS0                 : " << EPS0                       << "\n";
     tout << "SPEED_OF_LIGHT       : " << SPEED_OF_LIGHT             << "\n";
@@ -401,7 +476,10 @@ int main(void) {
 
     DataBinPlot<double> binCellEnergies( .08, .24, 100, "CellEnergies.dat" ); // 50 bins ranging from 3 keV to 6 keV per Cell
 
-    srand(time(NULL));
+    if (RANDOM_SEED == 0)
+        srand(time(NULL));
+    else
+        srand(RANDOM_SEED);
 
     // Energy distribution for randomly seeded cells
 
@@ -412,7 +490,10 @@ int main(void) {
         Particle electrons[NUMBER_OF_PARTICLES];
         for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++) {
             electrons[i].m   = ELECTRON_MASS;
-            electrons[i].q   = ELECTRON_CHARGE;
+            if (i >= NUMBER_OF_PARTICLES / 2.)
+                electrons[i].q = ELECTRON_CHARGE;
+            else
+                electrons[i].q =-ELECTRON_CHARGE;
             electrons[i].r.x = (SIMDIM > 0) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_X * CELL_SIZE_X;
             electrons[i].r.y = (SIMDIM > 1) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_Y * CELL_SIZE_Y;
             electrons[i].r.z = (SIMDIM > 2) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_Z * CELL_SIZE_Z;
@@ -441,7 +522,7 @@ int main(void) {
         }
     }
 
-    // Find the lowest Energy configuration: adjust Verlt with p *= 0.9999
+    // Find the lowest Energy configuration: adjust Verlet with p *= 0.9999
 
     // Open log file
     FILE * simdata = NULL;
@@ -457,7 +538,10 @@ int main(void) {
     Particle electrons[NUMBER_OF_PARTICLES];
     for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++) {
         electrons[i].m   = ELECTRON_MASS;
-        electrons[i].q   = ELECTRON_CHARGE;
+        if (i >= NUMBER_OF_PARTICLES / 2.)
+            electrons[i].q = ELECTRON_CHARGE;
+        else
+            electrons[i].q =-ELECTRON_CHARGE;
         electrons[i].r.x = (SIMDIM > 0) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_X * CELL_SIZE_X;
         electrons[i].r.y = (SIMDIM > 1) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_Y * CELL_SIZE_Y;
         electrons[i].r.z = (SIMDIM > 2) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_Z * CELL_SIZE_Z;
@@ -466,22 +550,24 @@ int main(void) {
         electrons[i].p.z = 0;
     }
 
-    const uint32_t printInterval   = 2000;
-    const uint32_t fprintInterval  = 200;
+    tout << "Stats fprintf interval: " << PRINTF_SIMDATA_INTERVAL << " meaning every " << PRINTF_SIMDATA_INTERVAL * DELTA_T_SI << " s\n";
 
     // Initialize Verlet Integration (Leapfrog): shift momentum half a time step
     Verlet( NUMBER_OF_PARTICLES, electrons, DELTA_T, true);
     for (uint32_t currentStep = 0; currentStep < NUMBER_OF_STEPS; currentStep++) {
         Verlet( NUMBER_OF_PARTICLES, electrons, DELTA_T );
 
-        if ((currentStep % fprintInterval == 0) or (currentStep % printInterval == 0)) {
-            const double T = CalcTotalKineticEnergy  ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
-            const double V = CalcTotalPotentialEnergy( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
-            const double L = CalcTotalAngularMomentum( NUMBER_OF_PARTICLES, electrons ) * UNIT_ANGULAR_MOMENTUM;
-            const double P = CalcTotalMomentum       ( NUMBER_OF_PARTICLES, electrons ) * UNIT_MOMENTUM;
-            const double E = T + V;
-            if (currentStep % fprintInterval == 0) {
-                fprintf( stats, "%e\t%e\t%e\t%e\t%e\t%e\n", currentStep * DELTA_T_SI, E, V, L, P, T);
+        if ((currentStep % PRINTF_INTERVAL == 0) or (currentStep % PRINT_INTERVAL == 0)) {
+            const double Te = CalcTotalKineticEnergyElectrons  ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
+            const double Ti = CalcTotalKineticEnergyIons( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
+            const double T  = CalcTotalKineticEnergy    ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
+            const double V  = CalcTotalPotentialEnergy  ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
+            const double L  = CalcTotalAngularMomentum  ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ANGULAR_MOMENTUM;
+            const double P  = CalcTotalMomentum         ( NUMBER_OF_PARTICLES, electrons ) * UNIT_MOMENTUM;
+            const double E  = T + V;
+            if (currentStep % PRINTF_INTERVAL == 0) 
+                fprintf( stats, "%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\n", currentStep * DELTA_T_SI, E, V, L, P, T, Te, Ti);
+            if (currentStep % PRINTF_SIMDATA_INTERVAL == 0) {
                 for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++)
                     fprintf( simdata, "%e\t", electrons[i].r.x );
                 fprintf( simdata, "\n" );
@@ -489,7 +575,7 @@ int main(void) {
                     fprintf( simdata, "%e\t", electrons[i].r.y );
                 fprintf( simdata, "\n" );
             }
-            if (currentStep % printInterval == 0)
+            if (currentStep % PRINT_INTERVAL == 0)
                 tout << "time: " << currentStep * DELTA_T_SI << " (" << 100*(double)currentStep/(double)NUMBER_OF_STEPS << "%), E: " << E << ", V: " << V << ", L: " << L << ", P:" << P << "\n";
         }
     }
