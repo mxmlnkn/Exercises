@@ -25,12 +25,12 @@
  *   - calculate force in 3 different steps (clear, calc, apply)              *
  ******************************************************************************/
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-#include <math.h>
-#include <float.h>
-#include <assert.h>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <cmath>
+#include <cfloat>
+#include <cassert>
 #include <omp.h>
 #include <iostream>
 #include <fstream>
@@ -110,7 +110,7 @@ inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & 
     const uint16_t supercells_to_consider_X = int( ceil( CELL_SIZE_X * CONSIDERATION_RATIO / ( CELL_SIZE_X * CELL_SIZE_X ) ) + 0.1 );
     const uint16_t supercells_to_consider_Y = int( ceil( CELL_SIZE_Y * CONSIDERATION_RATIO / ( CELL_SIZE_Y * CELL_SIZE_Y ) ) + 0.1 );
     const uint16_t supercells_to_consider_Z = int( ceil( CELL_SIZE_Z * CONSIDERATION_RATIO / ( CELL_SIZE_Z * CELL_SIZE_Z ) ) + 0.1 );
-    const uint16_t supercells_to_consider   = max( supercells_to_consider_X, max( supercells_to_consider_Y, supercells_to_consider_Z ) );
+    const uint16_t supercells_to_consider   = PERIODIC_FORCE * max( supercells_to_consider_X, max( supercells_to_consider_Y, supercells_to_consider_Z ) );
     
     // if maxXYZ == 0, then the for loop is rendered basically useless
     const uint16_t maxX = (SIMDIM >= 1) ? supercells_to_consider : 0;
@@ -125,7 +125,7 @@ inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & 
         const double r = r12.norm();
         Vec F12 = alpha * r12/r;
         
-        if( r < CELL_SIZE_MIN * CONSIDERATION_RATIO ) {
+        if( r < CELL_SIZE_MIN * CONSIDERATION_RATIO or !PERIODIC_FORCE ) {
             if (colshape == 99) {
                 if (r < 2.*cloudRadius)
                     F12 = F12 / ( 4.*cloudRadius*cloudRadius );
@@ -176,6 +176,14 @@ inline double Energy( const Particle & particle1, const Particle & particle2, ui
     return V;
 }
 
+struct SimulationBox {
+    Vec p;
+    SimulationBox() : p(Vec(0,0,0)) {};
+    
+};
+
+SimulationBox simulationBox;
+
 /* checks if particles has left the simulation space. Should be called every  *
  * time the position has been changed. Therefore would be nice to implement   *
  * this in all positions change routines, but then Vector.hpp wouldn't be     *
@@ -199,14 +207,33 @@ bool CheckBoundaryConditions( Particle & particle ) {
             }
         }
         
+        #define AWESOME_REFLEXION 1
         else if (BOUNDARY_CONDITION == 1) {
             /* Reflecting Boundary Condition */
             if (particle.r[dim] < 0) {
+                #if AWESOME_REFLEXION == 1
+                    //const double v  = particle.p[dim] / particle.m;
+                    //const double t1 = ( particle.r[dim] - 0 ) / v;
+                    //particle.r[dim] = 0 + (DELTA_T - t1) * (-v);   // seems to result in the best energy conservation ever seen ... That's fucking awesome Oo !!!. This basically symmetrizes the reflection. Meaning the length of the incoming 'ray' is the same as the outgoing... But this means, that in extreme cases where x = -epsilon, t1->0 => x = Delta_t * |v|. Problem is, that this should be the same v used to calculate x = -epsilon = x(i-1) + v*dt, therefore moving the particle v*2*dt in total ... I don't really get why this works, but it works... could by a nice discovery... the symmetry is awesome, so ... also this just seems compatible to the Verlet method
+                    particle.r[dim] = particle.r[dim] - DELTA_T * particle.p[dim] / particle.m; // so instead of correctly being reflected it's like the particle never moved -> the step is being inversed :S... This can actually explain the small errors. Those occur when a = (a -c) + c !=a. Although this method will conserve energy
+                #else
+                    particle.r[dim] = 0 + ( 0 - particle.r[dim] ); // seems to be the correct way, but is not energy conserving, the total time the particle needs for a certain distance (e.g. let it reflect 200x inside the box) will have an error ... Compare that error with the error that would result from higher kinetic energy !!!
+                #endif
                 particle.p[dim] *= -1;
-                particle.r[dim] = 0 + ( 0 - particle.r[dim] );
+                #pragma omp atomic
+                simulationBox.p[dim] -= 2.*particle.p[dim];
             } else if ( particle.r[dim] > NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) {
+                #if AWESOME_REFLEXION == 1
+                    //const double v  = particle.p[dim] / particle.m;
+                    //const double t1 = ( particle.r[dim] - NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] ) / v;
+                    //particle.r[dim] = NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] - (DELTA_T - t1) * v;
+                    particle.r[dim] = particle.r[dim] - DELTA_T * particle.p[dim] / particle.m; // inverse last Verlet-step/push
+                #else
+                    particle.r[dim] = NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] - (particle.r[dim] - NUMBER_OF_CELLS[dim] * CELL_SIZE[dim]);
+                #endif
                 particle.p[dim] *= -1;
-                particle.r[dim] = NUMBER_OF_CELLS[dim] * CELL_SIZE[dim] - (particle.r[dim] - NUMBER_OF_CELLS[dim] * CELL_SIZE[dim]);
+                #pragma omp atomic
+                simulationBox.p[dim] -= 2.*particle.p[dim];
             }
         }
         
@@ -221,6 +248,10 @@ bool CheckBoundaryConditions( Particle & particle ) {
             }
         }
     }
+    #if AWESOME_REFLEXION == 1
+        if (outOfBounds > 1 and BOUNDARY_CONDITION == 1)
+            tout << "Double Reflexion at one of the corners or edges => Trajectory non-physical!\n";
+    #endif
     return outOfBounds > 0;
 }
 
@@ -265,7 +296,8 @@ void Verlet( const uint32_t NUMBER_OF_PARTICLES, Particle particle[], const doub
             CheckBoundaryConditions(particle[i]);
         }
     }
-
+    
+    // First Verlet step only moves particle momentum half a step and doesn't need the other steps
     if (initialize)
         return;
 
@@ -289,9 +321,17 @@ void Verlet( const uint32_t NUMBER_OF_PARTICLES, Particle particle[], const doub
     #pragma omp parallel for
     for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++) {
         particle[i].p += particle[i].dp / 2.0;
-        //particle[i].p *= 0.9999;  // simulate stopping (make dependent of time step...)
+        if (STOPPING)
+            particle[i].p *= 0.9999;
     }
     // no shift of previous positions here, because this is only a step for calculating the current momentum !
+
+    // Apply simulationBox Momentum -> Galilei Transformation (also true for LT?)
+    /* This wouldn't behave nicely for one particle for example
+    #pragma omp parallel for
+    for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++)
+        particle[i].dp = simulationBox.p / NUMBER_OF_PARTICLES;
+    simulationBox.p = Vec(0,0,0); */
 
     return;
 }
@@ -331,14 +371,24 @@ double CalcTotalAngularMomentum( const unsigned int particleCount, Particle part
     return L.norm();
 }
 
-double CalcTotalMomentum( const unsigned int particleCount, Particle particle[] ) {
-    Vec P;
+Vec CalcTotalMomentum( const unsigned int particleCount, Particle particle[] ) {
+    Vec P(0,0,0);
     for (unsigned int i = 0; i < particleCount; i++) {
         P.x += particle[i].p.x;
         P.y += particle[i].p.y;
         P.z += particle[i].p.z;
     }
-    return P.norm();
+    return P;
+}
+
+Vec MaxMomentum( const unsigned int particleCount, Particle particle[] ) {
+    Vec P(0,0,0);
+    for (unsigned int i = 0; i < particleCount; i++) {
+        P.x = max( P.x, particle[i].p.x );
+        P.y = max( P.y, particle[i].p.y );
+        P.z = max( P.z, particle[i].p.z );
+    }
+    return P;
 }
 
 
@@ -453,6 +503,8 @@ double CalcTotalKineticEnergyElectrons( const unsigned int particleCount, Partic
 }
 
 int main(void) {
+    assert( ((NUMBER_OF_PARTICLES_PER_CELL % 2) == 0) or SPECIES != 3 );
+
     /* for (uint16_t i = 0; i <= 27; i++) {
         Vec tmp = getRelativeDirections( i );
         printf( "direction:%u => (%i,%i,%i)\n", i, int(tmp.x), int(tmp.y), int(tmp.z) );
@@ -490,7 +542,7 @@ int main(void) {
         Particle electrons[NUMBER_OF_PARTICLES];
         for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++) {
             electrons[i].m   = ELECTRON_MASS;
-            if (i >= NUMBER_OF_PARTICLES / 2.)
+            if ( SPECIES == 3 && i >= NUMBER_OF_PARTICLES / 2.)
                 electrons[i].q = ELECTRON_CHARGE;
             else
                 electrons[i].q =-ELECTRON_CHARGE;
@@ -538,10 +590,10 @@ int main(void) {
     Particle electrons[NUMBER_OF_PARTICLES];
     for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++) {
         electrons[i].m   = ELECTRON_MASS;
-        if (i >= NUMBER_OF_PARTICLES / 2.)
-            electrons[i].q = ELECTRON_CHARGE;
+        if ( SPECIES == 3 && i >= NUMBER_OF_PARTICLES / 2.)
+            electrons[i].q = ION_CHARGE;
         else
-            electrons[i].q =-ELECTRON_CHARGE;
+            electrons[i].q = ELECTRON_CHARGE;
         electrons[i].r.x = (SIMDIM > 0) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_X * CELL_SIZE_X;
         electrons[i].r.y = (SIMDIM > 1) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_Y * CELL_SIZE_Y;
         electrons[i].r.z = (SIMDIM > 2) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_Z * CELL_SIZE_Z;
@@ -563,8 +615,10 @@ int main(void) {
             const double T  = CalcTotalKineticEnergy    ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double V  = CalcTotalPotentialEnergy  ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double L  = CalcTotalAngularMomentum  ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ANGULAR_MOMENTUM;
-            const double P  = CalcTotalMomentum         ( NUMBER_OF_PARTICLES, electrons ) * UNIT_MOMENTUM;
+            const Vec Pvec  = CalcTotalMomentum         ( NUMBER_OF_PARTICLES, electrons ) * UNIT_MOMENTUM + simulationBox.p * UNIT_MOMENTUM;
+            const Vec Pmax  = MaxMomentum               ( NUMBER_OF_PARTICLES, electrons ) * UNIT_MOMENTUM;
             const double E  = T + V;
+            const double P  = Pvec.x + Pvec.y + Pvec.z;
             if (currentStep % PRINTF_INTERVAL == 0) 
                 fprintf( stats, "%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\n", currentStep * DELTA_T_SI, E, V, L, P, T, Te, Ti);
             if (currentStep % PRINTF_SIMDATA_INTERVAL == 0) {
@@ -576,7 +630,7 @@ int main(void) {
                 fprintf( simdata, "\n" );
             }
             if (currentStep % PRINT_INTERVAL == 0)
-                tout << "time: " << currentStep * DELTA_T_SI << " (" << 100*(double)currentStep/(double)NUMBER_OF_STEPS << "%), E: " << E << ", V: " << V << ", L: " << L << ", P:" << P << "\n";
+                tout << "[" << 100*(double)currentStep/(double)NUMBER_OF_STEPS << "%] E: " << E << ", V: " << V << ", <P.x>:" << Pvec.x/NUMBER_OF_PARTICLES << ", <P.x>/Pmax.x:" << Pvec.x/NUMBER_OF_PARTICLES/Pmax.x /*max(max(Pmax.x,Pmax.y),Pmax.z)*/ << "\n";
         }
     }
 
@@ -585,3 +639,4 @@ int main(void) {
 
     return 0;
 }
+

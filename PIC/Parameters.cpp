@@ -1,11 +1,17 @@
+#include <cassert>
+#include <cstdlib>
+
 //componentsConfig.param
 const uint16_t SIMDIM                 = 2;
-const double CONSIDERATION_RATIO      = 1.0;  // Force between particles will be calculated if distance between those two is smaller than CONSIDERATION_RATIO * CELL_SIZE
-const uint32_t NUMBER_OF_STEPS        = 1e7;
-const bool FULL_N_SQUARED_FORCE       = false; // if false, then force is calculated only with the particles in the same cell
-const uint32_t RANDOM_SEED            = 43907340; //if 0, then time() is used
+const bool     PERIODIC_FORCE         = false;    // if false CONSIDERATION_RATIO still has effect, except if it is higher than the largest possible distance in one cell
+const double   CONSIDERATION_RATIO    = 100;      // Force between particles will be calculated if distance between those two is smaller than CONSIDERATION_RATIO * CELL_SIZE. If 0 then force is not calculated periodically
+const uint32_t NUMBER_OF_STEPS        = 1e6;      
+const bool     FULL_N_SQUARED_FORCE   = false;    // if false, then force is calculated only with the particles in the same cell
+const uint32_t RANDOM_SEED            = 43907340; // if 0, then time() is used
+const bool     STOPPING               = false;    // if some momentum ist lost every time step. Can be used to determine state of lowest energy
+
 //GasConfig.param
-const double GAS_DENSITY_SI           = 1.e30; // 1/m^3
+const double GAS_DENSITY_SI           = 1.e30;    // 1/m^3
 
 //physicalConstants.param
 const double ELEMENTARY_CHARGE_SI     = 1.602176565e-19;  // C
@@ -15,6 +21,7 @@ const double MUE0_SI                  = M_PI * 4.e-7;     // N/A^2 = kg*m/C^2
 const double EPS0_SI                  = 1.0/(MUE0_SI*SPEED_OF_LIGHT_SI*SPEED_OF_LIGHT_SI);    // C^2/J*m, 8.854187817e-12
 
 //particleConfig.param
+const double SPECIES                  = 1;                    // 1:only electrons, 2:only ions, 3:both in equal parts (NUMBER_OF_PARTICLES_PER_CELL must be even!)
 const double ELECTRON_TEMPERATURE_keV = 0.0;
 const double ION_TEMPERATURE_keV      = 0.0;
 const double ELECTRON_MASS_SI         = 9.109382e-31;         // kg
@@ -25,7 +32,7 @@ const uint32_t NUMBER_OF_PARTICLES_PER_CELL = 26;   // NUM instead of NUMBER_OF 
 const uint16_t DEFAULT_PARTICLE_SHAPE = 1;  //00:point-point, 01:ball-ball (CIC radialsymmetric equivalent), 99:sphere-sphere    
 
 //GridConfig.param
-const double DELTA_T_SI               = 1.5e-19;
+const double DELTA_T_SI               = 1e-20;
 const uint32_t NUMBER_OF_CELLS_X      = 1;
 const uint32_t NUMBER_OF_CELLS_Y      = 1;
 const uint32_t NUMBER_OF_CELLS_Z      = 1;
@@ -33,7 +40,7 @@ const double CELL_SIZE_SI             = pow( double(NUMBER_OF_PARTICLES_PER_CELL
 const double CELL_SIZE_X_SI           = CELL_SIZE_SI;   // (!!!) picongpu naming with width, height and depth seems to be too random => could lead to mixups
 const double CELL_SIZE_Y_SI           = CELL_SIZE_SI;
 const double CELL_SIZE_Z_SI           = CELL_SIZE_SI;
-const uint16_t BOUNDARY_CONDITION     = 0;  //0:periodic, 1:reflecting, 2:adhering
+const uint16_t BOUNDARY_CONDITION     = 1;              //0:periodic, 1:reflecting, 2:adhering
 
 //output
 const uint32_t PRINT_INTERVAL          = 1000;
