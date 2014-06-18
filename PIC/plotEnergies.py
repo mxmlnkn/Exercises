@@ -59,15 +59,19 @@ if args.stats:
     else:     
         plot( data[0][:maxdata], (data[1][:maxdata]-data[2][:maxdata])/N_Particles*1000 )
 
+    subplot(324)
+    xlabel("t/s")
+    ylabel("P/(kg m/s)")
+    plot( data[0][:maxdata], data[4][:maxdata]/N_Particles*1000 )
 
     # support for older stats.dat-files
     if len(data) > 7:
-        subplot(324)
+        subplot(325)
         xlabel("t/s")
         ylabel("Te/eV")
         plot( data[0][:maxdata], data[6][:maxdata]/N_Particles*1000 )
 
-        subplot(325)
+        subplot(326)
         xlabel("t/s")
         ylabel("Ti/keV")
         plot( data[0][:maxdata], data[7][:maxdata]/N_Particles*1000 )
