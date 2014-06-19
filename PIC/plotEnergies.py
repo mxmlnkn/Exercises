@@ -7,6 +7,7 @@ from numpy import *
 from matplotlib.pyplot import * #xlabel,ylabel,plot,legend,show,step,connect,title,setp
 from matplotlib import animation
 import argparse
+import os.path
 
 parser = argparse.ArgumentParser()
 parser.add_argument("rundir", help="Directory which contains 'simOutput'")
@@ -32,7 +33,7 @@ if args.initenergies:
     step( data[0],data[3], where='mid', label="CIC" )
     legend()
 
-# E,T,L,V,P for random initial positions going into quilibrium through stopping
+# E,T,L,V,P for random initial positions going into equilibrium through stopping
 if args.stats:
     figure()
     suptitle( str(args.rundir) )
@@ -87,28 +88,59 @@ if args.lastconfig:
 
 # Animation
 if args.particlemovement:
+    newProgramOutputAvailable = False
     data  = genfromtxt( str(args.rundir)+"/simdata.dat", dtype='float', comments='#', skip_footer=1 )
-    fig   = figure()
-    DPI   = fig.get_dpi()
-    fig.set_size_inches( 800.0/float(DPI), 600.0/float(DPI) )
-    ax    = axes()#xlim=(0, 1), ylim=(0, 1))
-    scatter, = ax.plot( data[0], data[1], "bo" )
-    title( str(args.rundir) )
+
+    DPI   = matplotlib.rcParams['figure.dpi']
+    if os.path.isfile( str(args.rundir)+"/Electrons.dat" ):
+        fig   = figure( figsize = ( 1200./DPI, 600./DPI ) )
+        newProgramOutputAvailable = True
+        dataEons = genfromtxt( str(args.rundir)+"/Electrons.dat", dtype='float', comments='#', skip_footer=1 )
+        dataIons = genfromtxt( str(args.rundir)+"/Ions.dat",      dtype='float', comments='#', skip_footer=1 )
+        #fig.set_size_inches( 1600./float(DPI), 500./float(DPI) )
+        ax = subplot( 121, xlim=( 0, round(amax(data[0::2])) ),     ylim=( 0, round(amax(data[1::2])) ) )
+        scatter, = ax.plot( data[0], data[1], "bo" )
+        ax = subplot( 122, xlim=( 0, round(amax(dataEons[0::2])) ), ylim=( 0, round(amax(dataEons[1::2])) ) )
+        scatterEons, = ax.plot( dataEons[0], dataEons[1], "bo" )
+        scatterIons, = ax.plot( dataIons[0], dataIons[1], "ro" )
+    else:
+        fig = figure( figsize = ( 800./DPI, 600./DPI ) )
+        ax  = axes()
+        scatter, = ax.plot( data[0], data[1], "bo" )
+    subplots_adjust(bottom=0.1, left=.05, right=.95, top=.90, hspace=.35)
+    suptitle( str(args.rundir) )
+    #tight_layout()
+    
+    # Animation control stuff
     clear = True
+    paused = False
+    currentFrame = 0
     def init():
         scatter.set_data([],[])
+        if newProgramOutputAvailable:
+            scatterEons.set_data([],[])
+            scatterIons.set_data([],[])
         return scatter,
     def animate(i):
+        global currentFrame
+        if not paused:
+            currentFrame += 1
         if clear:
-            scatter.set_data( data[2*i], data[2*i+1] )
-        else:
+            scatter.set_data( data[2*currentFrame], data[2*currentFrame+1] )
+            if newProgramOutputAvailable:
+                scatterEons.set_data( dataEons[2*currentFrame], dataEons[2*currentFrame+1] )
+                scatterIons.set_data( dataIons[2*currentFrame], dataIons[2*currentFrame+1] )
+        else: # if not clear, then draw all particles from t=0 to current t which will form a kind of density plot
             a = data[0]
             b = data[1]
-            for k in range(1,i):
+            for k in range(1,currentFrame):
                 a = np.concatenate( (a, data[2*k]  ) )
                 b = np.concatenate( (b, data[2*k+1]) )
             scatter.set_data( a, b )
-        return scatter,
+        if newProgramOutputAvailable:
+            return (scatter,) + (scatterEons,) + (scatterIons,)
+        else:
+            return scatter,
     # call the animator.  blit=True means only re-draw the parts that have changed.
     anim = animation.FuncAnimation(fig, animate, init_func=init,
                                    frames=len(data[:,1])/2, interval=20, blit=True)
@@ -116,10 +148,16 @@ if args.particlemovement:
         anim.save( str(args.rundir)+"/Simulation2D60fps.mp4", fps=60, dpi=(DPI/800.*1920.), extra_args=['-vcodec', 'libx264'])
 
     def key_analyzer(event):
-        global clear
+        global clear, paused, currentFrame
         if (event.key == 'c'):
-            print "clear was: ",clear
             clear = not clear
+        if (event.key == ' ' or event.key == 'p'):
+            paused = not paused
+        if (event.key == '+'):
+            currentFrame += 1
+        if (event.key == '-'):
+            currentFrame -= 1
+            
 
     connect('key_press_event', key_analyzer)
 

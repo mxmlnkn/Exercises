@@ -43,7 +43,7 @@ const double CELL_SIZE_Z_SI           = CELL_SIZE_SI;
 const uint16_t BOUNDARY_CONDITION     = 1;              //0:periodic, 1:reflecting, 2:adhering
 
 //output
-const uint32_t PRINT_INTERVAL          = 1000;
+const uint32_t PRINT_INTERVAL          = 10000;
 const uint32_t PRINTF_INTERVAL         = 100;
 const uint32_t PRINTF_SIMDATA_INTERVAL = min( int(ceil( 1e-18 / DELTA_T_SI )), 1 );
 // for dt = 1e-19 => Nprint = 10. for 1e-17 it prints every time step, so that we can see something
