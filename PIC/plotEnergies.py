@@ -41,9 +41,12 @@ if args.stats:
     # t	E/keV	V/keV	L/(m*kg*m/s)	P/(kg*m/s)
     subplot(321)
     xlabel("t/s")
-    ylabel("E/eV")
-    # t	E/keV	V/keV	L/(m*kg*m/s)	P/(kg*m/s)
-    plot( data[0][:maxdata], data[1][:maxdata]/N_Particles*1000 ) #factor 1000 needed, because stored in keV
+    if len(data) > 8:
+        ylabel(r"$\Delta\mathrm{E}/\mathrm{eV}$")
+        plot( data[0][:maxdata], data[8][:maxdata]/N_Particles*1000 ) #factor 1000 needed, because stored in keV
+    else:
+        ylabel("E/eV")
+        plot( data[0][:maxdata], data[1][:maxdata]/N_Particles*1000 ) #factor 1000 needed, because stored in keV
 
     subplot(322)
     xlabel("t/s")

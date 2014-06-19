@@ -1,4 +1,4 @@
-// del pic.exe && g++ pic.cpp -o pic.exe -Wall -fopenmp && pic.exe
+// del pic.exe && g++ pic.cpp -o pic.exe -Wall -Wextra - Wimplicit -pedantic-errors -pedantic -Wcomment -Wconversion -Werror -fopenmp && pic.exe
 /******************************************************************************
  * ToDo:                                                                      *
  *   - use cuda                                                               *
@@ -34,6 +34,7 @@
 #include <omp.h>
 #include <iostream>
 #include <fstream>
+#include <list>
 
 #define DEBUG 1
 
@@ -105,26 +106,28 @@ inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & 
     const double cloudRadius = CELL_SIZE_X / 2.0;
     const double alpha       = particle1.q * particle2.q / ( 4.*M_PI*EPS0 );
     Vec F(0,0,0);
-    
+
     // Loop over periodically continued simulation box i.e. Supercells, because this simulation only supports one supercell at a time with not so clearly separated cells
     const uint16_t supercells_to_consider_X = int( ceil( CELL_SIZE_X * CONSIDERATION_RATIO / ( CELL_SIZE_X * CELL_SIZE_X ) ) + 0.1 );
     const uint16_t supercells_to_consider_Y = int( ceil( CELL_SIZE_Y * CONSIDERATION_RATIO / ( CELL_SIZE_Y * CELL_SIZE_Y ) ) + 0.1 );
     const uint16_t supercells_to_consider_Z = int( ceil( CELL_SIZE_Z * CONSIDERATION_RATIO / ( CELL_SIZE_Z * CELL_SIZE_Z ) ) + 0.1 );
-    const uint16_t supercells_to_consider   = PERIODIC_FORCE * max( supercells_to_consider_X, max( supercells_to_consider_Y, supercells_to_consider_Z ) );
-    
+    uint16_t supercells_to_consider         = max( supercells_to_consider_X, max( supercells_to_consider_Y, supercells_to_consider_Z ) );
+    if (PERIODIC_FORCE == false)
+        supercells_to_consider = 0;
+
     // if maxXYZ == 0, then the for loop is rendered basically useless
     const uint16_t maxX = (SIMDIM >= 1) ? supercells_to_consider : 0;
     const uint16_t maxY = (SIMDIM >= 2) ? supercells_to_consider : 0;
     const uint16_t maxZ = (SIMDIM >= 3) ? supercells_to_consider : 0;
-    
+
     for (int iPeriodZ = -maxZ; iPeriodZ <= maxZ; iPeriodZ++)
     for (int iPeriodY = -maxY; iPeriodY <= maxY; iPeriodY++)
     for (int iPeriodX = -maxX; iPeriodX <= maxX; iPeriodX++) {
-        // this is the only line changing in the loops 
+        // this is the only line changing in the loops
         const Vec r12  = particle1.r - ( particle2.r + Vec( iPeriodX * CELL_SIZE_X, iPeriodY * CELL_SIZE_Y, iPeriodZ * CELL_SIZE_Z) );
         const double r = r12.norm();
         Vec F12 = alpha * r12/r;
-        
+
         if( r < CELL_SIZE_MIN * CONSIDERATION_RATIO or !PERIODIC_FORCE ) {
             if (colshape == 99) {
                 if (r < 2.*cloudRadius)
@@ -143,10 +146,10 @@ inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & 
             }
         } else
             F12 *= 0;
-        
+
         F += F12;
     }
-    
+
     return F;
 }
 
@@ -176,13 +179,97 @@ inline double Energy( const Particle & particle1, const Particle & particle2, ui
     return V;
 }
 
-struct SimulationBox {
+class SimulationBox {
+public:
     Vec p;
     SimulationBox() : p(Vec(0,0,0)) {};
-    
+    double E0, P0;
+    list<Particle> electrons[ NUMBER_OF_CELLS_X ][ NUMBER_OF_CELLS_Y ][ NUMBER_OF_CELLS_Z ];
+    list<Particle>      ions[ NUMBER_OF_CELLS_X ][ NUMBER_OF_CELLS_Y ][ NUMBER_OF_CELLS_Z ];
+
+    double CalcTotalPotentialEnergy( void );
+    double CalcTotalKineticEnergyElectrons( void );
+    double CalcTotalKineticEnergyIons( void );
+    double CalcTotalKineticEnergy( void );
+    Vec CalcTotalMomentum( void );
+    void PushLocation( const double dt );
+    void ClearDp( void );
+    void CalcDp ( const double dt );
+    void ApplyDp( void );
+    void Verlet ( const double dt, bool initialize = false );
 };
 
 SimulationBox simulationBox;
+
+void SimulationBox::ClearDp( void ) {
+    #pragma omp parallel for
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & eons = this->electrons[ix][iy][iz];
+        list<Particle> & ions = this->ions     [ix][iy][iz];
+        for (list<Particle>::iterator i = eons.begin(); i != eons.end(); i++)
+            i->dp = Vec(0,0,0);
+        for (list<Particle>::iterator i = ions.begin(); i != ions.end(); i++)
+            i->dp = Vec(0,0,0);
+    }
+}
+
+/* Loop Template 
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & eons = this->electrons[ix][iy][iz];
+        list<Particle> & ions = this->ions     [ix][iy][iz];
+        // electron-electron and electron-ion pairing
+        for (list<Particle>::iterator i = eons.begin(); i != eons.end(); i++) {
+            // electron-electron pairing
+            for (list<Particle>::iterator j = eons.begin(); j != i; j++) // j != i is only equivalent to j < i, if both loops are incremented in the same manner, which should be true if the list don't change (do CheckBoundary somewhere else). It it's not true... fuck STL...
+                V += 0.5 * Energy( *i, *j );
+            // electron-ion pairing
+            for (list<Particle>::iterator j = ions.begin(); j != ions.end(); j++) // Because different list, go through completely
+                V += Energy( *i, *j );
+        }
+        // ion-ion pairing
+        for (list<Particle>::iterator i = ions.begin(); i != ions.end(); i++) {
+            for (list<Particle>::iterator j = ions.begin(); j != j; j++)
+                V += 0.5 * Energy( *i, *j );
+        }
+    }
+*/
+
+            
+void SimulationBox::CalcDp( const double dt ) {
+    this->ClearDp();
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & eons = this->electrons[ix][iy][iz];
+        list<Particle> & ions = this->ions     [ix][iy][iz];
+        // electron-electron and electron-ion pairing
+        for (list<Particle>::iterator i = eons.begin(); i != eons.end(); i++) {
+            // electron-electron pairing
+            for (list<Particle>::iterator j = eons.begin(); j != i; j++) { // exclude at least self-pairing. j != i is only equivalent to j < i, if both loops are incremented in the same manner, which should be true if the list don't change (do CheckBoundary somewhere else). It it's not true... fuck STL...
+                const Vec dp12 = ForceActingOnParticle1( *i, *j ) * dt;
+                i->dp += dp12;
+                j->dp -= dp12;    // only possible if (i,j) and (j,i) aren't both calculated => j <= i condition, and j != i, because that is self collision
+            }
+            // electron-ion pairing
+            for (list<Particle>::iterator j = ions.begin(); j != ions.end(); j++) { // Because different list, go through completely
+                const Vec dp12 = ForceActingOnParticle1( *i, *j ) * dt;
+                i->dp += dp12;
+                j->dp -= dp12;
+            }
+        }
+        // ion-ion pairing
+        for (list<Particle>::iterator i = ions.begin(); i != ions.end(); i++)
+            for (list<Particle>::iterator j = ions.begin(); j != i; j++) {
+                const Vec dp12 = ForceActingOnParticle1( *i, *j ) * dt;
+                i->dp += dp12;
+                j->dp -= dp12;
+            }
+    }
+}
 
 /* checks if particles has left the simulation space. Should be called every  *
  * time the position has been changed. Therefore would be nice to implement   *
@@ -206,7 +293,7 @@ bool CheckBoundaryConditions( Particle & particle ) {
                 particle.r[dim] -= NUMBER_OF_CELLS[dim] * CELL_SIZE[dim]; //not safe for two cells at one push ! => courant criterium !
             }
         }
-        
+
         #define AWESOME_REFLEXION 1
         else if (BOUNDARY_CONDITION == 1) {
             /* Reflecting Boundary Condition */
@@ -236,7 +323,7 @@ bool CheckBoundaryConditions( Particle & particle ) {
                 simulationBox.p[dim] -= 2.*particle.p[dim];
             }
         }
-        
+
         else if (BOUNDARY_CONDITION == 2) {
             /* Adhering Boundary Condition */
             if (particle.r[dim] < 0) {
@@ -253,6 +340,84 @@ bool CheckBoundaryConditions( Particle & particle ) {
             tout << "Double Reflexion at one of the corners or edges => Trajectory non-physical!\n";
     #endif
     return outOfBounds > 0;
+}
+
+Vec Velocity( Vec p, double m ) {
+    return p / m;
+    //return p / sqrt( m*m + p.norm2() / ( SPEED_OF_LIGHT * SPEED_OF_LIGHT ) );
+    // for the non-relativistic limit the result will be p/m
+}
+
+void SimulationBox::ApplyDp( void ) {
+    #pragma omp parallel for
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & eons = this->electrons[ix][iy][iz];
+        list<Particle> & ions = this->ions     [ix][iy][iz];
+        for (list<Particle>::iterator i = eons.begin(); i != eons.end(); i++)
+            i->p += i->dp;
+        for (list<Particle>::iterator i = ions.begin(); i != ions.end(); i++) 
+            i->p += i->dp;
+    }
+}
+
+void SimulationBox::PushLocation( const double dt ) {
+    #pragma omp parallel for
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & eons = this->electrons[ix][iy][iz];
+        list<Particle> & ions = this->ions     [ix][iy][iz];
+        for (list<Particle>::iterator i = eons.begin(); i != eons.end(); i++) {
+            i->r += Velocity( i->p, i->m ) * dt;
+            CheckBoundaryConditions( *i );
+        }
+        for (list<Particle>::iterator i = ions.begin(); i != ions.end(); i++) {
+            i->r += Velocity( i->p, i->m ) * dt;
+            CheckBoundaryConditions( *i );
+        }
+    }
+}
+
+
+void SimulationBox::Verlet( const double dt, bool initialize ) {
+    /* Algorithm:                                   *
+     *     p += ForceActingOnThisParticle * dt/2.0; *
+     *     r += p / m * dt/2.0;                     *
+     *     r += p / m * dt/2.0;                     *
+     *     p += ForceActingOnThisParticle * dt/2.0; */
+
+    this->CalcDp( 0.5 * dt );
+    this->ApplyDp();
+    
+    // First Verlet step only moves particle momentum half a step and doesn't need the other steps
+    if (initialize)
+        return;
+        
+    this->PushLocation( dt ); // could be combined in applyDp too save time when iterating over the lists :S
+
+    /* Reimplement this:
+        // r_prev[highest] is the oldest position => shift r_prev[i] to r_prev[i+1]
+        for (uint16_t j = STEPS_TO_REMEMBER-1; j > 0; j--) {
+            i->r_prev[j] = i->r_prev[j-1];
+            i->p_prev[j] = i->p_prev[j-1];
+        }
+        i->r_prev[0] = i->r;
+        i->p_prev[0] = i->p;
+    */
+
+    this->CalcDp( 0.5 * dt );
+    this->ApplyDp();
+
+    // Apply simulationBox Momentum -> Galilei Transformation (also true for LT?)
+    /* This wouldn't behave nicely for one particle for example
+    #pragma omp parallel for
+    for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++)
+        particle[i].dp = simulationBox.p / NUMBER_OF_PARTICLES;
+    simulationBox.p = Vec(0,0,0); */
+
+    return;
 }
 
 void Verlet( const uint32_t NUMBER_OF_PARTICLES, Particle particle[], const double dt, bool initialize = false ) {
@@ -296,7 +461,7 @@ void Verlet( const uint32_t NUMBER_OF_PARTICLES, Particle particle[], const doub
             CheckBoundaryConditions(particle[i]);
         }
     }
-    
+
     // First Verlet step only moves particle momentum half a step and doesn't need the other steps
     if (initialize)
         return;
@@ -343,6 +508,40 @@ double CalcTotalKineticEnergy( const unsigned int particleCount, Particle partic
     return T;
 }
 
+double SimulationBox::CalcTotalKineticEnergy( void ) {
+    return this->CalcTotalKineticEnergyIons() + this->CalcTotalKineticEnergyElectrons();
+}
+
+double SimulationBox::CalcTotalPotentialEnergy( void ) {
+    double E = 0;
+    // for every cell calculate potential of particles in the same cell. If we want the full potential over all cells the loop will have to be more complex !!!
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & eons = this->electrons[ix][iy][iz];
+        list<Particle> & ions = this->ions     [ix][iy][iz];
+        // electron-electron and electron-ion potential
+        for (list<Particle>::iterator i = eons.begin(); i != eons.end(); i++) {
+            double V = 0;
+            for (list<Particle>::iterator j = eons.begin(); j != i; j++)  // i < j, to exclude double calculations between particle 1-2 and 2-1 would have better performance, but list::iterator is not capable of operator<
+                if ( i != j ) // exclude at least self-collisions
+                    V += Energy( *i, *j );
+            for (list<Particle>::iterator j = ions.begin(); j != ions.end(); j++)  // because the inner list ist not the same as the outer we don't use i < j, but the fool loop
+                V += Energy( *i, *j );
+            E += V;
+        }
+        // ion-ion potential
+        for (list<Particle>::iterator i = ions.begin(); i != ions.end(); i++) {
+            double V = 0;
+            for (list<Particle>::iterator j = ions.begin(); j != i; j++)
+                if ( i != j ) // exclude self-collisions
+                    V += Energy( *i, *j );
+            E += V;
+        }
+    }
+    return E;
+}
+
 double CalcTotalPotentialEnergy( const unsigned int particleCount, Particle particle[], uint16_t colshape = DEFAULT_PARTICLE_SHAPE ) {
     double E = 0;
     #pragma omp parallel for
@@ -371,6 +570,21 @@ double CalcTotalAngularMomentum( const unsigned int particleCount, Particle part
     return L.norm();
 }
 
+Vec SimulationBox::CalcTotalMomentum( void ) {
+    Vec P(0,0,0);
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & eons = this->electrons[ix][iy][iz];
+        list<Particle> & ions = this->ions     [ix][iy][iz];
+        for (list<Particle>::iterator i = eons.begin(); i != eons.end(); i++)
+            P += i->p;
+        for (list<Particle>::iterator i = ions.begin(); i != ions.end(); i++)
+            P += i->p;
+    }
+    return P;
+}
+
 Vec CalcTotalMomentum( const unsigned int particleCount, Particle particle[] ) {
     Vec P(0,0,0);
     for (unsigned int i = 0; i < particleCount; i++) {
@@ -384,9 +598,9 @@ Vec CalcTotalMomentum( const unsigned int particleCount, Particle particle[] ) {
 Vec MaxMomentum( const unsigned int particleCount, Particle particle[] ) {
     Vec P(0,0,0);
     for (unsigned int i = 0; i < particleCount; i++) {
-        P.x = max( P.x, particle[i].p.x );
-        P.y = max( P.y, particle[i].p.y );
-        P.z = max( P.z, particle[i].p.z );
+        P.x = max( P.x, abs( particle[i].p.x ) );
+        P.y = max( P.y, abs( particle[i].p.y ) );
+        P.z = max( P.z, abs( particle[i].p.z ) );
     }
     return P;
 }
@@ -408,7 +622,7 @@ public:
 
     int addData( T_Datatype dataentry ) {
         // 0 <= dataentry < (max-min)/Nbins will be in 1st bin
-        uint16_t ibin = floor( (dataentry - min) / ( (max-min)/Nbins ) );
+        uint16_t ibin = uint16_t( (dataentry - min) / ( (max-min)/Nbins ) );
         if (ibin >= Nbins)
             return 0;
         else {
@@ -502,8 +716,56 @@ double CalcTotalKineticEnergyElectrons( const unsigned int particleCount, Partic
     return T;
 }
 
+double SimulationBox::CalcTotalKineticEnergyIons( void ) {
+    double T = 0;
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & ions = this->ions[ix][iy][iz];
+        for (list<Particle>::iterator i = ions.begin(); i != ions.end(); i++)
+            T += i->p.norm2() / (2.0 * i->m);
+    }
+    return T;
+}
+
+double SimulationBox::CalcTotalKineticEnergyElectrons( void ) {
+    double T = 0;
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & eons = this->electrons[ix][iy][iz];
+        for (list<Particle>::iterator i = eons.begin(); i != eons.end(); i++)
+            T += i->p.norm2() / (2.0 * i->m);
+    }
+    return T;
+}
+
 int main(void) {
     assert( ((NUMBER_OF_PARTICLES_PER_CELL % 2) == 0) or SPECIES != 3 );
+
+    list<int> L;
+    L.push_back(0);              // Insert a new element at the end
+    L.push_front(0);             // Insert a new element at the beginning
+    L.insert(++L.begin(),2);     // Insert "2" before position of first argument
+                                 // (Place before second argument)
+    L.push_back(5);
+    L.push_back(6);
+
+    list<int>::iterator i;
+
+    for(i=L.begin(); i != L.end(); i++) 
+        cout << *i << " ";
+    cout << endl;
+    int k = 0;
+    for(i=L.begin(); i != L.end(); i++) {
+        if (k++ == 2)
+            L.erase(i++);
+        cout << *i << " ";
+    }
+    cout << endl;
+    for(i=L.begin(); i != L.end(); i++) 
+        cout << *i << " ";
+    cout << endl;
 
     /* for (uint16_t i = 0; i <= 27; i++) {
         Vec tmp = getRelativeDirections( i );
@@ -554,7 +816,7 @@ int main(void) {
             electrons[i].p.z = 0;
         }
 
-        double E = CalcTotalPotentialEnergy( NUMBER_OF_PARTICLES, electrons, shape ) / 
+        double E = CalcTotalPotentialEnergy( NUMBER_OF_PARTICLES, electrons, shape ) /
                    ( NUMBER_OF_PARTICLES_PER_CELL*NUMBER_OF_CELLS_X*NUMBER_OF_CELLS_Y*NUMBER_OF_CELLS_Z );
         //tout << "E:" << E*UNIT_ENERGY*UNITCONV_Joule_to_keV << "\n";
 
@@ -574,7 +836,7 @@ int main(void) {
         }
     }
 
-    // Find the lowest Energy configuration: adjust Verlet with p *= 0.9999
+    // To find the lowest Energy configuration: adjust Verlet with p *= 0.9999
 
     // Open log file
     FILE * simdata = NULL;
@@ -584,43 +846,68 @@ int main(void) {
 
     FILE * stats = NULL;
     stats = fopen ("stats.dat","w");
-    fprintf( stats, "# t\tE/keV\tV/keV\tL/(m*kg*m/s)\tP/(kg*m/s)\tT/keV\n" );
+    fprintf( stats, "# t\tE/keV\tV/keV\tL/(m*kg*m/s)\tP/(kg*m/s)\tT/keV\tTe/keV\tTi/keV(E-E0)/keV\n" );
     assert(stats != NULL);
 
     Particle electrons[NUMBER_OF_PARTICLES];
     for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++) {
         electrons[i].m   = ELECTRON_MASS;
-        if ( SPECIES == 3 && i >= NUMBER_OF_PARTICLES / 2.)
-            electrons[i].q = ION_CHARGE;
-        else
-            electrons[i].q = ELECTRON_CHARGE;
         electrons[i].r.x = (SIMDIM > 0) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_X * CELL_SIZE_X;
         electrons[i].r.y = (SIMDIM > 1) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_Y * CELL_SIZE_Y;
         electrons[i].r.z = (SIMDIM > 2) * (double)rand()/RAND_MAX * NUMBER_OF_CELLS_Z * CELL_SIZE_Z;
         electrons[i].p.x = 0;
         electrons[i].p.y = 0;
         electrons[i].p.z = 0;
+        if ( SPECIES == 3 && i >= NUMBER_OF_PARTICLES / 2.) {
+            electrons[i].q = ION_CHARGE;
+            simulationBox.ions[0][0][0].push_back( electrons[i] );
+        } else {
+            electrons[i].q = ELECTRON_CHARGE;
+            simulationBox.electrons[0][0][0].push_back( electrons[i] );
+        }
     }
+    simulationBox.E0 = CalcTotalKineticEnergy( NUMBER_OF_PARTICLES, electrons ) + simulationBox.CalcTotalPotentialEnergy();// CalcTotalPotentialEnergy( NUMBER_OF_PARTICLES, electrons );
+    tout << "Initial Energy E0      : " << simulationBox.E0 * UNIT_ENERGY * UNITCONV_Joule_to_keV << "keV\n"; // 2.75746keV
+    tout << "Initial Energy E0 (old): " << ( CalcTotalKineticEnergy( NUMBER_OF_PARTICLES, electrons ) + CalcTotalPotentialEnergy( NUMBER_OF_PARTICLES, electrons ) ) * UNIT_ENERGY * UNITCONV_Joule_to_keV << "keV\n"; // 2.75746keV
 
     tout << "Stats fprintf interval: " << PRINTF_SIMDATA_INTERVAL << " meaning every " << PRINTF_SIMDATA_INTERVAL * DELTA_T_SI << " s\n";
 
     // Initialize Verlet Integration (Leapfrog): shift momentum half a time step
     Verlet( NUMBER_OF_PARTICLES, electrons, DELTA_T, true);
+    simulationBox.Verlet( DELTA_T, true );
+    
+    const double Told = CalcTotalKineticEnergy( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
+    const double Tnew = simulationBox.CalcTotalKineticEnergy() * UNIT_ENERGY * UNITCONV_Joule_to_keV;
+    tout << "After initializing Verlet: Tnew:" << Tnew << ", Told:" << Told << "\n";
+    
+    /* sudden divergence in some later timestep :S... interestingly it coincides with Pmax=0
+    [7%] E: -0.0340671, V: -0.041845, <P.x>:-6.63089e-026<P.x>(new):-6.63091e-026, <P.x>/Pmax.x:-0.159739
+    [7.1%] E: -0.0340671, V: -0.0423616, <P.x>:1.10997e-025<P.x>(new):1.10944e-025, <P.x>/Pmax.x:0.39776
+    [7.2%] E: -0.0340671, V: -0.039833, <P.x>:1.10997e-025<P.x>(new):1.10944e-025, <P.x>/Pmax.x:0.319649
+    [7.3%] E: -0.0340671, V: -0.0367926, <P.x>:3.79616e-025<P.x>(new):3.79632e-025, <P.x>/Pmax.x:inf
+    [7.4%] E: -0.0340671, V: -0.0390653, <P.x>:-6.9239e-026<P.x>(new):-7.17503e-026, <P.x>/Pmax.x:-0.0776683
+    [7.5%] E: -0.0340671, V: -0.0405048, <P.x>:-6.9239e-026<P.x>(new):-7.17503e-026, <P.x>/Pmax.x:-0.0774706
+    [7.6%] E: -0.0340671, V: -0.0383669, <P.x>:-6.9239e-026<P.x>(new):-7.17503e-026, <P.x>/Pmax.x:-0.122263 */
+    
     for (uint32_t currentStep = 0; currentStep < NUMBER_OF_STEPS; currentStep++) {
         Verlet( NUMBER_OF_PARTICLES, electrons, DELTA_T );
+        simulationBox.Verlet( DELTA_T );
 
         if ((currentStep % PRINTF_INTERVAL == 0) or (currentStep % PRINT_INTERVAL == 0)) {
             const double Te = CalcTotalKineticEnergyElectrons  ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double Ti = CalcTotalKineticEnergyIons( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double T  = CalcTotalKineticEnergy    ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double V  = CalcTotalPotentialEnergy  ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ENERGY * UNITCONV_Joule_to_keV;
+            const double Vn = simulationBox.CalcTotalPotentialEnergy() * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double L  = CalcTotalAngularMomentum  ( NUMBER_OF_PARTICLES, electrons ) * UNIT_ANGULAR_MOMENTUM;
             const Vec Pvec  = CalcTotalMomentum         ( NUMBER_OF_PARTICLES, electrons ) * UNIT_MOMENTUM + simulationBox.p * UNIT_MOMENTUM;
+            const Vec PvecN =                            simulationBox.CalcTotalMomentum() * UNIT_MOMENTUM + simulationBox.p * UNIT_MOMENTUM;
             const Vec Pmax  = MaxMomentum               ( NUMBER_OF_PARTICLES, electrons ) * UNIT_MOMENTUM;
             const double E  = T + V;
             const double P  = Pvec.x + Pvec.y + Pvec.z;
-            if (currentStep % PRINTF_INTERVAL == 0) 
-                fprintf( stats, "%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\n", currentStep * DELTA_T_SI, E, V, L, P, T, Te, Ti);
+            const double dE = E - simulationBox.E0 * UNIT_ENERGY * UNITCONV_Joule_to_keV;
+            if (currentStep % PRINTF_INTERVAL == 0)
+                fprintf( stats, "%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\n", currentStep * DELTA_T_SI, E, V, L, P, T, Te, Ti, dE);
             if (currentStep % PRINTF_SIMDATA_INTERVAL == 0) {
                 for (uint32_t i = 0; i < NUMBER_OF_PARTICLES; i++)
                     fprintf( simdata, "%e\t", electrons[i].r.x );
@@ -630,7 +917,7 @@ int main(void) {
                 fprintf( simdata, "\n" );
             }
             if (currentStep % PRINT_INTERVAL == 0)
-                tout << "[" << 100*(double)currentStep/(double)NUMBER_OF_STEPS << "%] E: " << E << ", V: " << V << ", <P.x>:" << Pvec.x/NUMBER_OF_PARTICLES << ", <P.x>/Pmax.x:" << Pvec.x/NUMBER_OF_PARTICLES/Pmax.x /*max(max(Pmax.x,Pmax.y),Pmax.z)*/ << "\n";
+                tout << "[" << 100*(double)currentStep/(double)NUMBER_OF_STEPS << "%] E: " << E << ", Vold: " << V << ", Vnew: " << Vn << ", <P.x>:" << Pvec.x/NUMBER_OF_PARTICLES << "<P.x>(new):" << PvecN.x/NUMBER_OF_PARTICLES << ", <P.x>/Pmax.x:" << Pvec.x/NUMBER_OF_PARTICLES/Pmax.x /*max(max(Pmax.x,Pmax.y),Pmax.z)*/ << "\n";
         }
     }
 

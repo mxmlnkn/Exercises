@@ -21,18 +21,18 @@ const double MUE0_SI                  = M_PI * 4.e-7;     // N/A^2 = kg*m/C^2
 const double EPS0_SI                  = 1.0/(MUE0_SI*SPEED_OF_LIGHT_SI*SPEED_OF_LIGHT_SI);    // C^2/J*m, 8.854187817e-12
 
 //particleConfig.param
-const double SPECIES                  = 1;                    // 1:only electrons, 2:only ions, 3:both in equal parts (NUMBER_OF_PARTICLES_PER_CELL must be even!)
+const double SPECIES                  = 3;                    // 1:only electrons, 2:only ions, 3:both in equal parts (NUMBER_OF_PARTICLES_PER_CELL must be even!)
 const double ELECTRON_TEMPERATURE_keV = 0.0;
 const double ION_TEMPERATURE_keV      = 0.0;
 const double ELECTRON_MASS_SI         = 9.109382e-31;         // kg
 const double ELECTRON_CHARGE_SI       =-ELEMENTARY_CHARGE_SI; // C
 const double ION_MASS_SI              = PROTON_MASS_SI;       // kg
 const double ION_CHARGE_SI            = ELEMENTARY_CHARGE_SI; // C
-const uint32_t NUMBER_OF_PARTICLES_PER_CELL = 26;   // NUM instead of NUMBER_OF in picongpu is also inconsistent, and there are other longer names, soo ...
+const uint32_t NUMBER_OF_PARTICLES_PER_CELL = 4;   // NUM instead of NUMBER_OF in picongpu is also inconsistent, and there are other longer names, soo ...
 const uint16_t DEFAULT_PARTICLE_SHAPE = 1;  //00:point-point, 01:ball-ball (CIC radialsymmetric equivalent), 99:sphere-sphere    
 
 //GridConfig.param
-const double DELTA_T_SI               = 1e-20;
+const double DELTA_T_SI               = 1e-19;
 const uint32_t NUMBER_OF_CELLS_X      = 1;
 const uint32_t NUMBER_OF_CELLS_Y      = 1;
 const uint32_t NUMBER_OF_CELLS_Z      = 1;
@@ -45,7 +45,7 @@ const uint16_t BOUNDARY_CONDITION     = 1;              //0:periodic, 1:reflecti
 //output
 const uint32_t PRINT_INTERVAL          = 1000;
 const uint32_t PRINTF_INTERVAL         = 100;
-const uint32_t PRINTF_SIMDATA_INTERVAL = min( ceil( 1e-18 / DELTA_T_SI ), 1. );
+const uint32_t PRINTF_SIMDATA_INTERVAL = min( int(ceil( 1e-18 / DELTA_T_SI )), 1 );
 // for dt = 1e-19 => Nprint = 10. for 1e-17 it prints every time step, so that we can see something
 
 //================================== Units ===================================//
@@ -86,6 +86,6 @@ const double DELTA_T                  = DELTA_T_SI / UNIT_TIME;
 const double CELL_SIZE_X              = CELL_SIZE_X_SI / UNIT_LENGTH;
 const double CELL_SIZE_Y              = CELL_SIZE_Y_SI / UNIT_LENGTH;
 const double CELL_SIZE_Z              = CELL_SIZE_Z_SI / UNIT_LENGTH;
-const uint32_t CELL_SIZE[3]           = { CELL_SIZE_X, CELL_SIZE_Y, CELL_SIZE_Z };
-const uint32_t CELL_SIZE_MIN          = min( CELL_SIZE_X, min( CELL_SIZE_Y, CELL_SIZE_Z ) );
+const double CELL_SIZE[3]             = { CELL_SIZE_X, CELL_SIZE_Y, CELL_SIZE_Z };
+const double CELL_SIZE_MIN            = min( CELL_SIZE_X, min( CELL_SIZE_Y, CELL_SIZE_Z ) );
 const uint32_t NUMBER_OF_CELLS[3]     = { NUMBER_OF_CELLS_X, NUMBER_OF_CELLS_Y, NUMBER_OF_CELLS_Z };
