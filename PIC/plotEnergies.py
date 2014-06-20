@@ -22,6 +22,8 @@ parser.add_argument("--tmax", help="", type=float)
 args = parser.parse_args()
 N_Particles = args.numofparticles
 
+oldSimdataAvailable = os.path.isfile( str(args.rundir)+"/simdata.dat" )
+
 # loadtext/genfromtxt always loads the file row-wise in an array data[0] being the first row
 
 # Energy Distributions for uniformly random start positions
@@ -60,7 +62,7 @@ if args.stats:
     if len(data) > 5:
         plot( data[0][:maxdata],  data[5][:maxdata]/N_Particles*1000 )
         plot( data[0][:maxdata], (data[1][:maxdata]-data[2][:maxdata])/N_Particles*1000 )
-    else:     
+    else:
         plot( data[0][:maxdata], (data[1][:maxdata]-data[2][:maxdata])/N_Particles*1000 )
 
     subplot(324)
@@ -82,68 +84,97 @@ if args.stats:
 
 # Last configuration in Simulation
 if args.lastconfig:
-    data  = genfromtxt( str(args.rundir)+"/simdata.dat", dtype='float', comments='#', skip_footer=1 )
     figure()
-    plot( data[-1], data[-2], "bo" ) # last ist x, because we skipped the last line, because this plot shall also work for non finished simulations
+    if oldSimdataAvailable:
+        data  = genfromtxt( str(args.rundir)+"/simdata.dat", dtype='float', comments='#', skip_footer=1 )
+        plot( data[-1], data[-2], "bo" ) # last ist x, because we skipped the last line, because this plot shall also work for non finished simulations
+    else:
+        dataEons = genfromtxt( str(args.rundir)+"/Electrons.dat", dtype='float', comments='#', skip_footer=1 )
+        dataIons = genfromtxt( str(args.rundir)+"/Ions.dat",      dtype='float', comments='#', skip_footer=1 )
+        plot( dataEons[-1], dataEons[-2], "bo" )
+        plot( dataIons[-1], dataIons[-2], "ro" )
 
 # Animation
 if args.particlemovement:
-    newProgramOutputAvailable = False
-    data  = genfromtxt( str(args.rundir)+"/simdata.dat", dtype='float', comments='#', skip_footer=1 )
-
     DPI   = matplotlib.rcParams['figure.dpi']
+
+    newProgramOutputAvailable = False
     if os.path.isfile( str(args.rundir)+"/Electrons.dat" ):
-        fig   = figure( figsize = ( 1200./DPI, 600./DPI ) )
         newProgramOutputAvailable = True
         dataEons = genfromtxt( str(args.rundir)+"/Electrons.dat", dtype='float', comments='#', skip_footer=1 )
         dataIons = genfromtxt( str(args.rundir)+"/Ions.dat",      dtype='float', comments='#', skip_footer=1 )
-        #fig.set_size_inches( 1600./float(DPI), 500./float(DPI) )
+    if oldSimdataAvailable:
+        data  = genfromtxt( str(args.rundir)+"/simdata.dat", dtype='float', comments='#', skip_footer=1 )
+
+    if oldSimdataAvailable and newProgramOutputAvailable:
+        fig   = figure( figsize = ( 1200./DPI, 600./DPI ) )
         ax = subplot( 121, xlim=( 0, round(amax(data[0::2])) ),     ylim=( 0, round(amax(data[1::2])) ) )
         scatter, = ax.plot( data[0], data[1], "bo" )
         ax = subplot( 122, xlim=( 0, round(amax(dataEons[0::2])) ), ylim=( 0, round(amax(dataEons[1::2])) ) )
         scatterEons, = ax.plot( dataEons[0], dataEons[1], "bo" )
         scatterIons, = ax.plot( dataIons[0], dataIons[1], "ro" )
-    else:
+    elif oldSimdataAvailable:
         fig = figure( figsize = ( 800./DPI, 600./DPI ) )
-        ax  = axes()
+        ax = subplot( 111, xlim=( 0, round(amax(data[0::2])) ),     ylim=( 0, round(amax(data[1::2])) ) )
         scatter, = ax.plot( data[0], data[1], "bo" )
+    elif newProgramOutputAvailable:
+        fig = figure( figsize = ( 800./DPI, 600./DPI ) )
+        ax = subplot( 111, xlim=( 0, round(amax(dataEons[0::2])) ), ylim=( 0, round(amax(dataEons[1::2])) ) )
+        scatterEons, = ax.plot( dataEons[0], dataEons[1], "bo" )
+        scatterIons, = ax.plot( dataIons[0], dataIons[1], "ro" )
+
     subplots_adjust(bottom=0.1, left=.05, right=.95, top=.90, hspace=.35)
     suptitle( str(args.rundir) )
-    #tight_layout()
-    
+
     # Animation control stuff
     clear = True
     paused = False
     currentFrame = 0
     def init():
-        scatter.set_data([],[])
+        if oldSimdataAvailable:
+            scatter.set_data([],[])
         if newProgramOutputAvailable:
             scatterEons.set_data([],[])
             scatterIons.set_data([],[])
-        return scatter,
+
+        if oldSimdataAvailable and newProgramOutputAvailable:
+            return (scatter,) + (scatterEons,) + (scatterIons,)
+        elif newProgramOutputAvailable:
+            return (scatterEons,) + (scatterIons,)
+        else:
+            return scatter,
     def animate(i):
         global currentFrame
         if not paused:
             currentFrame += 1
         if clear:
-            scatter.set_data( data[2*currentFrame], data[2*currentFrame+1] )
+            if oldSimdataAvailable:
+                scatter.set_data( data[2*currentFrame], data[2*currentFrame+1] )
             if newProgramOutputAvailable:
                 scatterEons.set_data( dataEons[2*currentFrame], dataEons[2*currentFrame+1] )
                 scatterIons.set_data( dataIons[2*currentFrame], dataIons[2*currentFrame+1] )
-        else: # if not clear, then draw all particles from t=0 to current t which will form a kind of density plot
+        """else: # if not clear, then draw all particles from t=0 to current t which will form a kind of density plot
             a = data[0]
             b = data[1]
             for k in range(1,currentFrame):
                 a = np.concatenate( (a, data[2*k]  ) )
                 b = np.concatenate( (b, data[2*k+1]) )
-            scatter.set_data( a, b )
-        if newProgramOutputAvailable:
+            scatter.set_data( a, b )"""
+            
+        if oldSimdataAvailable and newProgramOutputAvailable:
             return (scatter,) + (scatterEons,) + (scatterIons,)
+        elif newProgramOutputAvailable:
+            return (scatterEons,) + (scatterIons,)
         else:
             return scatter,
     # call the animator.  blit=True means only re-draw the parts that have changed.
-    anim = animation.FuncAnimation(fig, animate, init_func=init,
-                                   frames=len(data[:,1])/2, interval=20, blit=True)
+
+    if newProgramOutputAvailable:
+        numberOfFrames = len(dataEons[:,1]) / 2
+    elif oldSimdataAvailable:
+        numberOfFrames = len(data[:,1]) / 2
+
+    anim = animation.FuncAnimation(fig, animate, init_func=init, frames=numberOfFrames, interval=20, blit=True)
     if args.saveani:
         anim.save( str(args.rundir)+"/Simulation2D60fps.mp4", fps=60, dpi=(DPI/800.*1920.), extra_args=['-vcodec', 'libx264'])
 
@@ -157,12 +188,18 @@ if args.particlemovement:
             currentFrame += 1
         if (event.key == '-'):
             currentFrame -= 1
-            
+
 
     connect('key_press_event', key_analyzer)
 
 if args.density:
-    data  = genfromtxt( str(args.rundir)+"/simdata.dat", dtype='float', comments='#', skip_footer=1 )
+    if oldSimdataAvailable:
+        data  = genfromtxt( str(args.rundir)+"/simdata.dat", dtype='float', comments='#', skip_footer=1 )
+    else:
+        dataEons = genfromtxt( str(args.rundir)+"/Electrons.dat", dtype='float', comments='#', skip_footer=1 )
+        dataIons = genfromtxt( str(args.rundir)+"/Ions.dat",      dtype='float', comments='#', skip_footer=1 )
+        data     = concatenate( (dataEons, dataIons) )
+        
     fig   = figure()
     DPI   = fig.get_dpi()
     # Estimate the 2D histogram
