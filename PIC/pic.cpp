@@ -1,4 +1,4 @@
-// del pic.exe && g++ pic.cpp -o pic.exe -Wall -Wextra -Wimplicit -pedantic-errors -pedantic -Wcomment -Wconversion -std=c++0x && pic.exe
+// del pic.exe && g++ pic.cpp -o pic.exe -Wall -Wextra -Wimplicit -pedantic-errors -pedantic -Wcomment -Wconversion -std=c++0x -O3 && pic.exe
 /******************************************************************************
  * ToDo:                                                                      *
  *   - use cuda                                                               *
@@ -37,7 +37,7 @@
 #include <list>
 #include <random>
 
-#define M_PI 3.14159265358979323846
+#define M_PI 3.14159265358979323846 // C++11 HASS GODDAMN IT !!!
 
 #define DEBUG 1
 
@@ -89,6 +89,7 @@ inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & 
           or floor( particle1.r.z / CELL_SIZE_Z ) != floor( particle2.r.z / CELL_SIZE_Z ) ) {
             if ( NUMBER_OF_CELLS_X * NUMBER_OF_CELLS_Y * NUMBER_OF_CELLS_Z == 1 )
                 tout << "ASSERT ERROR: Found particle outside of cell when calculating force, even though there is only 1 cell.\n";
+                assert(false);
             return Vec(0,0,0);
           }
 
@@ -107,7 +108,7 @@ inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & 
      * ..                                                                    *
      * 99 - sphere-sphere                                                    */
 
-    const double cloudRadius = CELL_SIZE_X / 2.0;
+    const double cloudRadius = PARTICLE_RADIUS;
     const double alpha       = particle1.q * particle2.q / ( 4.*M_PI*EPS0 );
     Vec F(0,0,0);
 
@@ -158,7 +159,7 @@ inline Vec ForceActingOnParticle1( const Particle & particle1, const Particle & 
 }
 
 inline double Energy( const Particle & particle1, const Particle & particle2, uint16_t colshape = DEFAULT_PARTICLE_SHAPE ) {
-    const double cloudRadius = CELL_SIZE_X / 2.0;
+    const double cloudRadius = PARTICLE_RADIUS;
     const Vec r12            = particle1.r - particle2.r;
     const double r           = r12.norm();
     // for two positive charges the potential energy is supposed to increase for smaller distances, meaning the particles slow down
@@ -409,15 +410,11 @@ bool SimulationBox::CheckBoundaryConditions( Particle & particle ) {
             }
         }
     }
-    #if AWESOME_REFLEXION == 1
-        if (outOfBounds > 1 and BOUNDARY_CONDITION == 1)
-            tout << "Double Reflexion at one of the corners or edges => Trajectory non-physical!\n";
-    #endif
     return outOfBounds > 0;
 }
 
 Vec Velocity( Vec p, double m ) {
-    // for the non-relativistic limit the result will be p/m
+    // for the non-relativistic limit the result will be p/m. For ultrarelativistic case result will be c*e_p
     return p / sqrt( m*m + p.norm2() / ( SPEED_OF_LIGHT * SPEED_OF_LIGHT ) );
 }
 
@@ -751,6 +748,7 @@ int main(void) {
     tout << "SPEED_OF_LIGHT       : " << SPEED_OF_LIGHT             << "\n";
     tout << "CELL_SIZE_SI         : " << CELL_SIZE_SI               << "\n";
     tout << "CELL_SIZE            : " << CELL_SIZE_SI / UNIT_LENGTH << "\n";
+    tout << "PARTICLE_RADIUS      : " << PARTICLE_RADIUS            << "\n";
     tout << "NUMBER_OF_CELLS_X    : " << NUMBER_OF_CELLS_X          << "\n";
     tout << "NUMBER_OF_CELLS_Y    : " << NUMBER_OF_CELLS_Y          << "\n";
     tout << "NUMBER_OF_CELLS_Z    : " << NUMBER_OF_CELLS_Z          << "\n";
@@ -818,14 +816,14 @@ int main(void) {
     for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
     for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
     for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
-    list<Particle> & eons = simBox.electrons[ix][iy][iz];
-    list<Particle> & ions = simBox.ions     [ix][iy][iz];
+        list<Particle> & eons = simBox.electrons[ix][iy][iz];
+        list<Particle> & ions = simBox.ions     [ix][iy][iz];
         std::default_random_engine rng(RANDOM_SEED);
         const double initialDrift = sqrt(1. - PARTICLE_INIT_DRIFT_GAMMA * PARTICLE_INIT_DRIFT_GAMMA) * SPEED_OF_LIGHT; // g*g = 1-v*v/c*c
         // draw momentum from temperature distribution. Of course this only makes sense non-relativistically
         std::normal_distribution<double> eon_vel_dist( initialDrift, sqrt( ELECTRON_TEMPERATURE / ELECTRON_MASS ) );
         std::normal_distribution<double> ion_vel_dist( initialDrift, sqrt(      ION_TEMPERATURE / ION_MASS      ) );
-        for (uint32_t i = 0; i < NUMBER_OF_PARTICLES_PER_CELL / 2.0; i++) {
+        for (uint32_t i = 0; i < NUMBER_OF_EONS_PER_CELL; i++) {
             Particle particle;
             particle.m   = ELECTRON_MASS;
             particle.q   = ELECTRON_CHARGE;
@@ -837,7 +835,7 @@ int main(void) {
             particle.p.z = (SIMDIM > 2) * eon_vel_dist(rng) * particle.m;
             eons.push_back( particle );
         }
-        for (uint32_t i = 0; i < NUMBER_OF_PARTICLES_PER_CELL / 2.0; i++) {
+        for (uint32_t i = 0; i < NUMBER_OF_IONS_PER_CELL; i++) {
             Particle particle;
             particle.m   = ION_MASS;
             particle.q   = ION_CHARGE;
