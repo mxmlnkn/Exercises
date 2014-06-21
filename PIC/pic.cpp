@@ -1,28 +1,22 @@
-// del pic.exe && g++ pic.cpp -o pic.exe -Wall -Wextra -Wimplicit -pedantic-errors -pedantic -Wcomment -Wconversion -std=c++0x -O3 && pic.exe
+// del pic.exe && g++ pic.cpp -o pic.exe -Wall -Wextra -Wimplicit -pedantic-errors -pedantic -Wcomment -Wconversion -Wuninitialized -std=c++0x -O3 && start pic.exe
 /******************************************************************************
  * ToDo:                                                                      *
  *   - use cuda                                                               *
  *   - implement weighting                                                    *
- *   - make it work for more than one cell (only force of particles in same cell)
  *   - weighting ~ m ~ 1/a ~ dt_min_needed ?!                                 *
- *   - copy relativistic formula in here                                      *
  *   - copy exact (relativistic) pusher from picongpu to Verlet               *
  *   - using more particles see them taking on maxwell distribution (fit)     *
- *   - make work for 3D                                                       *
- *   - seed with maxwell temperature                                          *
- *   - ensure momentum conservation for reflecting boundaries in one cell     *
- *     by also giving the simulation box a velocity !                         *
- *   - look why momentum rises, but kinetic energy is constant ...            *
- *       P^2 = (p1+p2+p3+..)^2 !~ Ekin ~ p1^2+p2^2+p3^2+.. (difference 2p1p2) *
- *   - use also protons => will that attenuate the error for energy           *
- *     conservation by itself?                                                *
+ *   - test for 3D (how)                                                      *
  *   - when calculating forces of neighbors, sum up beginning with smallest   *
  *     force to minimize numeric roundoff errors                              *
- *   - use particle lists per cell -> implement cell change in CheckBoundary  *
+ *   - implement cell change in CheckBoundary                                 *
  *   - F(r), V(r) output for all forces and for horizintal and diagonal dist. *
- *   - cellwise lists to make more cells only linearly more demanding         *
- *   - output electrons and ions separatedly                                  *
- *   - calculate force in 3 different steps (clear, calc, apply)              *
+ *   - Implement best possible float sum (sort and add)                       *
+ *   - As for unlike Charges they will approach each other infinitely small   *
+ *     this will pose a huge problem (steps would need to be chosen realy     *
+ *     small or adaptably. Even so it won't work in 1D, because they will     *
+ *     actually hit each other!                                               *
+ *   - Use fields like in PIC or just NSquare fields maxwell and so on ...    *
  ******************************************************************************/
 
 #include <cstdio>
