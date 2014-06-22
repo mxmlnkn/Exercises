@@ -104,11 +104,19 @@ if args.particlemovement:
         dataEons = genfromtxt( str(args.rundir)+"/Electrons.dat", dtype='float', comments='#', skip_footer=1 )
         dataIons = genfromtxt( str(args.rundir)+"/Ions.dat",      dtype='float', comments='#', skip_footer=1 )
         if len(dataEons) > 0:
-            NEons = len(dataEons[0])
+            if len(dataEons.shape) > 1:
+                NEons = len(dataEons[0])
+            else:
+                NEons = 1
+            dataEons = dataEons.reshape( (len(dataEons), NEons) ) # this only changes something if NEons == 1. Then it changes 1D to 2D array
         else:
-            NIons = 0
+            NEons = 0
         if len(dataIons) > 0:
-            NIons = len(dataIons[0])
+            if len(dataIons.shape) > 1:
+                NIons = NIons = len(dataIons[0])
+            else:
+                NIons = 1
+            dataIons = dataIons.reshape( (len(dataIons), NIons) )
         else:
             NIons = 0
         print NIons,NEons
@@ -117,20 +125,20 @@ if args.particlemovement:
 
     if oldSimdataAvailable and newProgramOutputAvailable:
         fig   = figure( figsize = ( 1200./DPI, 600./DPI ) )
-        ax = subplot( 121, xlim=( 0, round(amax(data[0::2])) ),     ylim=( 0, round(amax(data[1::2])) ) )
+        ax = subplot( 121, xlim=( 0, ceil(amax(data[0::2])) ),     ylim=( 0, ceil(amax(data[1::2])) ) )
         scatter, = ax.plot( data[0], data[1], "bo" )
-        ax = subplot( 122, xlim=( 0, round(amax(dataEons[0::2])) ), ylim=( 0, round(amax(dataEons[1::2])) ) )
+        ax = subplot( 122, xlim=( 0, ceil(amax(dataEons[0::2])) ), ylim=( 0, ceil(amax(dataEons[1::2])) ) )
         if NEons > 0:
             scatterEons, = ax.plot( dataEons[0], dataEons[1], "bo" )
         if NIons > 0:
             scatterIons, = ax.plot( dataIons[0], dataIons[1], "ro" )
     elif oldSimdataAvailable:
         fig = figure( figsize = ( 800./DPI, 600./DPI ) )
-        ax = subplot( 111, xlim=( 0, round(amax(data[0::2])) ),     ylim=( 0, round(amax(data[1::2])) ) )
+        ax = subplot( 111, xlim=( 0, ceil(amax(data[0::2])) ),     ylim=( 0, ceil(amax(data[1::2])) ) )
         scatter, = ax.plot( data[0], data[1], "bo" )
     elif newProgramOutputAvailable:
         fig = figure( figsize = ( 800./DPI, 600./DPI ) )
-        ax = subplot( 111, xlim=( 0, round(amax(dataEons[0::2])) ), ylim=( 0, round(amax(dataEons[1::2])) ) )
+        ax = subplot( 111, xlim=( 0, ceil(amax(dataEons[0::2])) ), ylim=( 0, ceil(amax(dataEons[1::2])) ) )
         if NEons > 0:
             scatterEons, = ax.plot( dataEons[0], dataEons[1], "bo" )
         if NIons > 0:
@@ -180,14 +188,36 @@ if args.particlemovement:
                     scatterEons.set_data( dataEons[2*currentFrame], dataEons[2*currentFrame+1] )
                 if NIons > 0:
                     scatterIons.set_data( dataIons[2*currentFrame], dataIons[2*currentFrame+1] )
-        """else: # if not clear, then draw all particles from t=0 to current t which will form a kind of density plot
-            a = data[0]
-            b = data[1]
+        else: # if not clear, then draw all particles from t=0 to current t which will form a kind of density plot
+            if oldSimdataAvailable:
+                a = data[0]
+                b = data[1]
+            if newProgramOutputAvailable:
+                if NEons > 0:
+                    ae = dataEons[0]
+                    be = dataEons[1]
+                if NIons > 0: 
+                    ai = dataIons[0]
+                    bi = dataIons[1]
             for k in range(1,currentFrame):
-                a = np.concatenate( (a, data[2*k]  ) )
-                b = np.concatenate( (b, data[2*k+1]) )
-            scatter.set_data( a, b )"""
-            
+                if oldSimdataAvailable:
+                    a = np.concatenate( (a, data[2*k]  ) )
+                    b = np.concatenate( (b, data[2*k+1]) )
+                if newProgramOutputAvailable:
+                    if NEons > 0:
+                        ae = np.concatenate( (ae, dataEons[2*k]  ) )
+                        be = np.concatenate( (be, dataEons[2*k+1]) )
+                    if NIons > 0:
+                        ai = np.concatenate( (ai, dataIons[2*k]  ) )
+                        bi = np.concatenate( (bi, dataIons[2*k+1]) )
+            if oldSimdataAvailable:
+                scatter.set_data( a,b )
+            if newProgramOutputAvailable:
+                if NEons > 0:
+                    scatterEons.set_data( ae,be )
+                if NIons > 0:
+                    scatterIons.set_data( ai,bi )
+
         if oldSimdataAvailable and newProgramOutputAvailable:
             if NIons > 0 and NEons > 0:
                 return (scatter,) + (scatterEons,) + (scatterIons,)
@@ -207,9 +237,9 @@ if args.particlemovement:
     # call the animator.  blit=True means only re-draw the parts that have changed.
 
     if newProgramOutputAvailable:
-        numberOfFrames = len(dataEons[:,1]) / 2
+        numberOfFrames = dataEons.shape[0] / 2
     elif oldSimdataAvailable:
-        numberOfFrames = len(data[:,1]) / 2
+        numberOfFrames = data.shape[0] / 2
 
     anim = animation.FuncAnimation(fig, animate, init_func=init, frames=numberOfFrames, interval=20, blit=True)
     if args.saveani:
@@ -241,7 +271,7 @@ if args.density:
             data = dataEons
         else:
             data = dataIons
-        
+
     fig   = figure()
     DPI   = fig.get_dpi()
     # Estimate the 2D histogram
@@ -256,15 +286,17 @@ if args.density:
     maxdata = min( len(x), args.tmax )
     x = x[:maxdata]
     y = y[:maxdata]
+    xmax = ceil(x.max()+0.1)
+    ymax = ceil(y.max()+0.1)
 
-    H, xedges, yedges = histogram2d( x,y, bins=nbins )
+    H, xedges, yedges = histogram2d( x,y, bins=nbins, range=[[0, xmax], [0, ymax]] )
     H = flipud(rot90(H)) # H needs to be rotated and flipped
     print "Hsum: ", H.sum(), " H.min:", H.min()," H.max:", H.max()
     H = H / H.sum()
 
     # Plot 2D histogram using pcolor
-    axis([0,int(x.max()+0.1), 0,int(y.max()+0.1)])
-    pcolormesh(xedges,yedges,H)
+    axis( [ 0,xmax, 0,ymax ] )
+    pcolormesh( xedges, yedges, H )
     cbar = colorbar()
     #cbar.ax.set_ylabel('Teilchenzahl')
 
@@ -273,5 +305,3 @@ if args.density:
 
 show()
 exit()
-
-

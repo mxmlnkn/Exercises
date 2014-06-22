@@ -326,8 +326,8 @@ int main(void) {
     FILE * stat = fopen( "statistics.dat", "w" );
     fprintf( stat, "#x\tdt\tsteps\tdev theta\n" );
 
-    for (int i = 6; i <= 6; i++) {
-        for (int j = 1; j <= 1; j++) {
+    for (int i = 6; i <= 6; i++) { // steps exponent
+        for (int j = 1; j <= 1; j++) { // r0 exponent
 			double r0   = rmin * pow(10,j); //must be greater than rmin!!!
 			double p0   = sqrt(2*m) * sqrt( E - alpha/r0 );
 			assert( r0 >= rmin ); //else asin will fail !
@@ -344,9 +344,8 @@ int main(void) {
              * problem, because we want to know the asymptotes of the trajectories.   *
              * Is also almost independent of Integration method for 1e5 or more steps *
              * p may be correct, but the direction of p could still be error prone !  */
-            particle[1].r.x = -r0*cos(M_PI - phi0);
-            particle[1].r.y =  r0*sin(M_PI - phi0);
-            particle[1].p.x = p*s/(r0*r0) * ( particle[1].r.y - particle[1].r.x * sqrt( pow( r0*p0/(p*s) ,2) - 1 ) );
+            particle[1].r.x =-r0*cos(M_PI - phi0);
+            particle[1].r.y = r0*sin(M_PI - phi0); + 0.5 * CELL_SIZE_X
             particle[1].p.y = sqrt(p0*p0 - particle[1].p.x * particle[1].p.x);
             //old pure numerical version. This also works now because of theta0 (asymptote approximation)
               /*particle[1].r.x = -r0;
