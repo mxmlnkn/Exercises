@@ -1,0 +1,137 @@
+Todo:
+    dp nicht F*dt sondern die analytische lösung des rutherfordstoßes nutzen ... 
+
+Die Frage ist: Warum ist bei manchen Simulation die Energie (und/oder) die Temperatur nicht erhalten, sondern steigt ungefähr linear mit der Zeit ?
+
+Ich habe eine Zentralkraft und eine rechteckige box mit periodischen randbedingungen im ort, die kraft wird aber nur durch addition der Kräfte der 25 Teilchen in der Box berechnet. Nun habe ich die Simulation in zig möglichen Arten verändert und versucht den Fehler zu finden. Dabei kann ich das Setup einordnen in: mean(E_kin)~kT steigt mit t (heating) und E und E_kin sind erhalten (E conserved).. folgende Liste ergibt sich:
+
+- Die Teilchen werden mit T=0 gestartet, d.h. die sollten sich eigtl. gar nicht bewegen
+- Die Simulation entspricht ungefähr vollständig ionisiertes Kupferplasma, d.h. Plasma-Dichte ist 1e30/m^3, wobei nur Elektronen simuliert werden.
+
+Legende der Ordnernamen:
+    - 2x2: 2 Zellen in x- und y-Richtung, falls weggelassen, dann 1x1
+    - N25: 25 Teilchen pro Zelle
+    - CIC: Cloud in Cell entspricht einer Kraft Berechnung wie folgt:
+        const double cloudRadius = CELL_SIZE_X / 2.0;
+        const double alpha       = particle1.q * particle2.q / ( 4.*M_PI*EPS0 );
+        if (r < 2.*cloudRadius) {
+            const double radii_ratio = r/cloudRadius;
+            // will result in F12 = F12/(4*cloudRadius^2) for radii_ratio = 2 :)
+            F12 = F12 * double( (1./32.)*pow(radii_ratio,4) - (9./16.)*radii_ratio*radii_ratio + radii_ratio ) / ( cloudRadius*cloudRadius );
+        } else
+            F12 = F12 / ( r*r );
+    - Point: normale Coulombkraft, d.h. Divergenz bei r=0
+    - Reflecting, Periodic: die Randbedingung
+    - correct_T:
+        alte T-Berechnung: T = E - V, E = V + E, kein Fehler für Point, aber bei CIC wurde für r > Zellgröße (d.h. in nur wenigen Fällen) V_korrekt * r berechnet, weil ein 1/r vergessen wurde
+        correct_T: T = sum p_i^2/(2m)
+    - dt: Simulations-Zeitschritt
+    - Periodic_Location_And_Force: bei einer Zelle wird diese in alle Richtungen 2x kopiert und dann die Kraft zwischen all jenen Teilchen berechnet. D.h. die Kraft wird von allen 5x5 Zellen (2D) addiert.
+    - 1_neighbor: wie obig, nur für 3x3 Zellen
+    - Full_Force: berechnet die Kraft nicht pro Zelle, sondern berechnet die Kraft über alle Zellen in der Simulations Box, kopiert aber keine Zellen um eine periodische Kraft zu simulieren. D.h. 4 Zellen wirken effektiv wie eine große Zelle. Der Unterschied zu einer großen Zelle ist die Berechnung der Kraft, die bei CIC von der Zellgröße abhängt, da Partikelgröße=Zellgröße gewählt wird. Für eine Zelle und für 'Point' macht dieses Attribut keinen Sinn, bzw. verändert das Resultat nicht
+
+Weitere Informationen die gegeben werden sind:
+    - Leider habe ich folgende Energien T,V,E nicht pro Teilchen angegeben, sodass man diese noch mit der Teilchenzahl normieren müsste, d.h. V->V/(Zellen*Teilchen_pro_Zelle)
+    - alles dem Auge nur grob abgelesen, d.h. Angaben +-10%
+    - V_drop: initial drop von V, der vorhanden ist, weil die uniform zufallsverteilten Positionen nicht die energetisch günstigste Verteilung ist.
+    - σV: die Schwankung von V, also V=V_0+-σV. V bleibt nach dem initial drop nämlich in allen Fällen so gut wie konstant, weil sich die energetisch günstigste Verteilung eingetellt hat. D.h. es steigen wenn dann nur E und T
+    - ΔT/Δt: heating
+
+Heating:
+    - 2x2N125_CIC_Reflecting_dt1.5e-19_correct_T: also 2x2 Zellen mit jeweils 125 Teilchen und reflektierenden RB und nem Zeitschritt von 1.5e-19s. correct_T kann man ignorieren, T ist immer korrekt, nur habe ich das Potential zuerst falsch berechnet, aber das hatte ich dann auch in E_ges genauso falsch, sodass T auch korrekt gewesen sein sollte.
+        V_drop= 14 keV, σV = 2 keV, ΔT/Δt = 13e14 keV/s
+    - 2x2N25_CIC_Periodic_dt1.5e-19_correct_T
+        V_drop= 1 keV, σV = 0.5 keV, ΔT/Δt = 5e14 keV/s
+    - 2x2N25_CIC_Periodic_dt1.5e-19_Full_Force_correct_T>
+        V_drop= 3 keV, σV = 0.5 keV, ΔT/Δt = 7e14 keV/s
+    - 2x2N25_CIC_Periodic_dt1.5e-20
+        V_drop= 1 keV, σV = 1 keV, ΔT/Δt = 3e13 keV/s
+    - 2x2N25_CIC_Periodic_Location_And_Force_dt1.5e-19_correct_T
+        V_drop= 0.5 keV, σV = 0.5 keV, ΔT/Δt = 2e14 keV/s
+    - 2x2N25_CIC_Reflecting_dt1.5e-19_correct_T
+        V_drop= 2 keV, σV = 1 keV, ΔT/Δt = 25e13 keV/s
+    - 2x2N25_CIC_Reflecting_dt1.5e-20
+        V_drop= 2 keV, σV = 1 keV, ΔT/Δt = 36e13 keV/s
+    - 2x2N125_CIC_Reflecting_dt1.5e-19_correct_T
+        V_drop= 15 keV, σV = 1 keV, ΔT/Δt = 13e14 keV/s
+    - 2x2N625_CIC_Reflecting_dt1.5e-19_correct_T
+        V_drop= 250 keV, σV = 5 keV, ΔT/Δt = 5e15 keV/s
+    - N25_CIC_Periodic_dt1.5e-18
+        V_drop= 0.3 keV, σV = 0.25 keV, ΔT/Δt = 266e11 keV/s
+    - N25_CIC_Periodic_dt1.5e-19
+        V_drop= 0.3 keV, σV = 0.25 keV, ΔT/Δt = 13e12 keV/s
+    - N25_CIC_Periodic_dt1.5e-19_correct_T
+        V_drop= 0.25 keV, σV = 0.2 keV, ΔT/Δt = 2e13 keV/s
+    - N25_CIC_Periodic_dt1.5e-19_correct_T_02: dasselbe wie oben, nur nochmal ausgeführt, d.h. mit zufällig anderen Startpositionen
+        V_drop= 0.25 keV, σV = 0.2 keV, ΔT/Δt = 2e13 keV/s
+    - N25_CIC_Periodic_dt1.5e-19_other_CIC_Force_02_correct_T: ganz komische Kraft, im Versuch die 2D-Kraft in zwei 1D-Kräfte zu zerlegen. Diese Daten sollten wsl. ignoriert werden.
+        V_drop=  keV, σV =  keV, ΔT/Δt = 200e15 keV/s
+    - N25_CIC_Periodic_dt1.5e-19_other_CIC_Force_correct_T
+        V_drop= 0.3 keV, σV = 0.2 keV, ΔT/Δt = 2e13 keV/s: Kraft ist nicht mehr zweigeteilt, sondern es wird immer die Kraft angenommen, die passiert, wenn sich die Teilchen schneiden. Kläglicher Versuch die sphärische Teilchenform auf eine quaderförmige Form = Zellgröße anzunähern, nachdem gesehen wurde, dass in 1D kein heating ist.
+    - N25_CIC_Periodic_dt1.5e-20
+        V_drop= 0.25 keV, σV = 0.2 keV, ΔT/Δt = 1.5e13 keV/s
+    - N25_CIC_Periodic_dt1.5e-21: memory error when plotting, but should be same as above
+        V_drop=  keV, σV =  keV, ΔT/Δt =  keV/s
+    - N25_CIC_Periodic_Location_And_Force_dt1.5e-18
+        V_drop= 0.2 keV, σV = 0.2 keV, ΔT/Δt = 55e11 keV/s
+    - N25_Point_Periodic: dt should be 1e-21. One major jump of almost 8keV (I guess because of force divergence, only weird that it is the only one)
+        V_drop= 1 keV, σV = 1-2(increasing) keV, ΔT/Δt = 40e14 keV/s
+    - N25_Point_Periodic_dt1.5e-20_correct_T: quite some jumps with 1e8keV, I guess because the force diverges and the time step is too large !
+    - N25_Point_Periodic_dt1.5e-21_correct_T
+        V_drop= 1 keV, σV = 1 keV, ΔT/Δt = 5e15 keV/s
+    - N100_CIC_Periodic_dt1.5e-19_correct_T
+        V_drop= 2.5 keV, σV = 0.25 keV, ΔT/Δt = 1.5e14 keV/s
+
+Nicht sicher:
+    - N25_CIC_Periodic_Location_And_Force_dt1.5e-19_1_neighbor_correct_T
+        V_drop= 0.25 keV, σV = 0.2 keV, ΔT/Δt = 0.3/4e-13 keV/s
+    - N25_Point_Reflecting: dt=1e-21. E seems to be rising, but not T, could be because of not having 'correct_T'. Wie man unten sieht steigt die Energie in den 10 Millionen Schritten um 0.02keV, während V und T sowieso um +- 0.2keV, also um das 10-fache schwanken, daher ist die Steigung mit bloßem Auge im Plot nicht sichtbar und vlt. nur ein akkumulierender numerische Fehler, anstatt ein Modellfehler, da andere Setups mit reflektierenden RB eigtl. komplett erhalten waren. siehe auch 'N25_Point_Reflecting_dt1e-21_correct_T'
+        V_drop= 0.9 keV, σV =  keV, ΔE/Δt = 0.02 keV / 1e-14s = 2e12 keV/s
+
+E,T,V erhalten:
+    - 2x2N25_CIC_Periodic_Location_And_Force_dt1.5e-19_Full_Force_correct_T
+        V_drop= 1 keV, σV = 0.25 keV
+    - 2x2N25_CIC_Periodic_Location_And_Force_dt1.5e-19_Full_Force_correct_T_2_Neighbors
+        V_drop= 0.7 keV, σV = 0.25 keV
+    - 2x2N25_CIC_Reflecting_dt1.5e-19_Full_Force_correct_T
+        V_drop= 4 keV, σV = 0.5 keV
+    - N25_CIC_Periodic_dt1.5e-19_1D_correct_T
+        V_drop= 0.06 keV, σV = 0.1 keV
+    - N25_CIC_Periodic_dt1.5e-19_1D_diagonal_correct_T
+        V_drop= 0.3 keV, σV = 0.1 keV
+    - N25_CIC_Periodic_Location_And_Force_dt1.5e-19_correct_T
+        V_drop= 0.15,0.2 keV, σV = 0.1 keV
+    - N25_CIC_Reflecting_dt1.5e-18
+        V_drop= 0.4 keV, σV = 0.1 keV
+    - N25_CIC_Reflecting_dt1.5e-19
+        V_drop= 0.3 keV, σV = 0.05 keV
+    - N25_CIC_Reflecting_dt1.5e-19_correct_T: Actually the total energy is perfectly conserved. The only derivation is quantized and only exactly 10e-7keV from time to time ... This is the only case this happens and may be attributed to 'correct_T' (see above)
+        V_drop= 0.25 keV, σV = 0.05 keV
+    - N25_CIC_Reflecting_dt1.5e-20
+        V_drop= 0.25 keV, σV = 0.05 keV
+    - N25_Point_Periodic_Location_And_Force
+        V_drop= 1.2 keV, σV = 0.25 keV
+    - N25_Point_Reflecting_dt1e-21_correct_T: E schwankt um 7e-5 keV, d.h. numerische float-Fehler wsl. quantisierung bei 10x zoom erkennbar
+        V_drop= 1 keV, σV = 0.15 keV
+    - N25_CIC_Periodic_Location_And_Force_dt1.5e-19_correct_T_0_Neighbor_spherical: In diesem Fall formen sich interessanterweise Haufen von Partikeln. 0 Nachbarn heißt effektiv, dass nur die ~r^n Kraft berechnet wird und jegliche 1/r^2 Kraft 0 gesetzt wird. Trotzdem komisch, dass sich nur hier Haufen bilden ...
+        V_drop=  keV, σV =  keV
+    N25_CIC_Periodic_Location_And_Force_dt1.5e-19_correct_T_1_neighbor_spherical
+        V_drop= 0.2 keV, σV = 0.05 keV
+    N25_CIC_Periodic_Location_And_Force_dt1.5e-20: was mich hier irritiert, ist dass die Teilchen anfangs auseinander fliegen, was sie obig nicht tun. Dann bleiben sie in den Ecken, sodass nicht gnaz ersichtlich ist, ob sich Haufen bilden, oder es an den Ecken liegt.
+        V_drop= 0.1 keV, σV = 0.1 keV, σT = 0.05 keV
+    N25_CIC_Periodic_Location_And_Force_dt1.5e-20_spherical: geht genauso auseinander wie obiges, also warum dann nicht die neuen versionen ?! (hierfür wurde der quellcode schnell geändert, d.h. der Rest des Codes ist exakt wie obig)
+        V_drop= 0.1 keV, σV = 0.1 keV, σT = 0.05 keV
+    N25_CIC_Periodic_Location_And_Force_dt1e-20_correct_T_2_neighbor_spherical: geht aus irgendeinem Grund anfangs nicht in einer Explosion auseinander, obwohl es prinzipiell dasselbe sein sollte wie 'N25_CIC_Periodic_Location_And_Force_dt1.5e-20_spherical'
+        V_drop= 0.004 keV, σV = 0.05 keV, σT = 0.002 keV
+
+Andere:
+    - N25_Point_01: Uses boundary conditions and dt should be 1e-21. Also a friction force is used here, to see what the endstate looks like
+
+Interessante Dinge und Beobachtung:
+ - ΔT/Δt ist bei 2x2N25_CIC_Periodic_dt1.5e-20 ungefähr um Faktor 10 kleiner als 2x2N25_CIC_Periodic_dt1.5e-19_correct_T, was den Fehler in dt zu groß schieben könnte
+ - Energie erhalten für reflektierende RB => Fehler kommt aus nichtstetigen V-Änderung bei 'Teleportation' der Teilchen
+ - Zeitschritt ist für die meisten Zwecke fast egal im Bereich 1e-21, 1e-18, daher wurde in den späteren Tests dt auf 1.5e-19 fixiert
+ - Zu fehlender Explosion bei ''. Das war eigentlich nur ein Zeichen, was anders ist: r < CELL_SIZE_X * (a+NUMBER_OF_NEIGHBORS), dabei ist keine Explosion bei a=0 und bei a=1 ist eine. bei a=1 und NUMBER_OF_NEIGHBORS=1 werden die 8 angrenzenden Zellen durchlaufen. die Bedingung an r < CELL_SIZE_X*2 stößt dabei teilweise an ihre Grenzen !!!!!!!! z.b. wenn ein Partikel am linken Zellenrand ist, so schneidet die durch r aufgespannte sphäre den betrachten Zellenbereich. Dadurch summiert man die Kräfte letztendlich nur über einen Kreis, dem dem ein wenig abgeschnitten wurde. Eine Art Halbmond ... Das ist aber auch nciht gewollt !!! Ähnliches passiert bei der Summation direkt über alle Zellen, da summiert man halt über ein Viereck. Das führt dazu, dass führt dazu, dass sie Kräfte ungleich stark rausmitteln ... Aber dass das zur Explosion führt ist äußerst interessant :S...
+
+
+

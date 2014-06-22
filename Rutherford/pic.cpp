@@ -1,23 +1,9 @@
 // del pic.exe && g++ pic.cpp -o pic.exe -Wall -Wextra -Wimplicit -pedantic-errors -pedantic -Wcomment -Wconversion -Wuninitialized -std=c++0x -O3 && start pic.exe
 /******************************************************************************
  * ToDo:                                                                      *
- *   - use cuda                                                               *
- *   - implement weighting                                                    *
- *   - weighting ~ m ~ 1/a ~ dt_min_needed ?!                                 *
- *   - copy exact (relativistic) pusher from picongpu to Verlet               *
- *   - using more particles see them taking on maxwell distribution (fit)     *
- *   - test for 3D (how)                                                      *
- *   - when calculating forces of neighbors, sum up beginning with smallest   *
- *     force to minimize numeric roundoff errors                              *
- *   - implement cell change in CheckBoundary                                 *
- *   - F(r), V(r) output for all forces and for horizintal and diagonal dist. *
- *   - Implement best possible float sum (sort and add)                       *
- *   - As for unlike Charges they will approach each other infinitely small   *
- *     this will pose a huge problem (steps would need to be chosen realy     *
- *     small or adaptably. Even so it won't work in 1D, because they will     *
- *     actually hit each other!                                               *
- *   - Use fields like in PIC or just NSquare fields maxwell and so on ...    *
- *   - print every second instead of every 10th time step                     *
+ *   - make work for center of mass (i.e. for similar particle masses)        *
+ *   - substitute verlet with analytical integrated trajectory (but only in   *
+ *     one time step!)                                                        *
  ******************************************************************************/
 
 #include <cstdio>
@@ -185,6 +171,8 @@ public:
     SimulationBox();
     ~SimulationBox();
     double E0, Te0, Ti0;
+    Vec L0;
+    uint64_t numberOfAppliedBoundaryConditions;
     Vec P0;
     list<Particle> electrons[ NUMBER_OF_CELLS_X ][ NUMBER_OF_CELLS_Y ][ NUMBER_OF_CELLS_Z ];
     list<Particle>      ions[ NUMBER_OF_CELLS_X ][ NUMBER_OF_CELLS_Y ][ NUMBER_OF_CELLS_Z ];
@@ -197,9 +185,10 @@ public:
     double CalcTotalKineticEnergyElectrons( void );
     double CalcTotalKineticEnergyIons( void );
     double CalcTotalKineticEnergy( void );
+    double CalcTotalEnergy( void );
     Vec CalcTotalMomentum( void );
     Vec MaxMomentum( void );
-    double CalcTotalAngularMomentum( void );
+    Vec CalcTotalAngularMomentum( void );
 
     void PushLocation( const double dt );
     void ClearDp( void );
@@ -209,7 +198,7 @@ public:
     bool CheckBoundaryConditions( Particle & particle );
 };
 
-SimulationBox::SimulationBox() : p(Vec(0,0,0)) {
+SimulationBox::SimulationBox() : p(Vec(0,0,0)), numberOfAppliedBoundaryConditions(0) {
 
     // Open log file
     this->simdata_eons = fopen ("Electrons.dat","w");
@@ -405,12 +394,14 @@ bool SimulationBox::CheckBoundaryConditions( Particle & particle ) {
             }
         }
     }
+    this->numberOfAppliedBoundaryConditions += outOfBounds;
     return outOfBounds > 0;
 }
 
 Vec Velocity( Vec p, double m ) {
     // for the non-relativistic limit the result will be p/m. For ultrarelativistic case result will be c*e_p
-    return p / sqrt( m*m + p.norm2() / ( SPEED_OF_LIGHT * SPEED_OF_LIGHT ) );
+    return p / m;
+    //return p / sqrt( m*m + p.norm2() / ( SPEED_OF_LIGHT * SPEED_OF_LIGHT ) );
 }
 
 void SimulationBox::ApplyDp( void ) {
@@ -489,6 +480,10 @@ double SimulationBox::CalcTotalKineticEnergy( void ) {
     return this->CalcTotalKineticEnergyIons() + this->CalcTotalKineticEnergyElectrons();
 }
 
+double SimulationBox::CalcTotalEnergy( void ) {
+    return this->CalcTotalKineticEnergy() + this->CalcTotalPotentialEnergy();
+}
+
 double SimulationBox::CalcTotalPotentialEnergy( void ) {
     double E = 0;
     // for every cell calculate potential of particles in the same cell. If we want the full potential over all cells the loop will have to be more complex !!!
@@ -519,14 +514,27 @@ double SimulationBox::CalcTotalPotentialEnergy( void ) {
     return E;
 }
 
-double SimulationBox::CalcTotalAngularMomentum( void ) {
+Vec SimulationBox::CalcTotalAngularMomentum( void ) {
     Vec L(0,0,0);
-    /*for (unsigned int i = 0; i < particleCount; i++) {
-        L.x += particle[i].r.y * particle[i].p.z - particle[i].r.z * particle[i].p.y;
-        L.y += particle[i].r.z * particle[i].p.x - particle[i].r.x * particle[i].p.z;
-        L.z += particle[i].r.x * particle[i].p.y - particle[i].r.y * particle[i].p.x;
-    }*/
-    return L.norm();
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & eons = this->electrons[ix][iy][iz];
+        list<Particle> & ions = this->ions     [ix][iy][iz];
+        // electrons
+        for (list<Particle>::iterator i = eons.begin(); i != eons.end(); i++) {
+            L.x += i->r.y * i->p.z - i->r.z * i->p.y;
+            L.y += i->r.z * i->p.x - i->r.x * i->p.z;
+            L.z += i->r.x * i->p.y - i->r.y * i->p.x;
+        }
+        // ions
+        for (list<Particle>::iterator i = ions.begin(); i != ions.end(); i++) {
+            L.x += i->r.y * i->p.z - i->r.z * i->p.y;
+            L.y += i->r.z * i->p.x - i->r.x * i->p.z;
+            L.z += i->r.x * i->p.y - i->r.y * i->p.x;
+        }
+    }
+    return L;
 }
 
 Vec SimulationBox::CalcTotalMomentum( void ) {
@@ -683,93 +691,97 @@ int main(void) {
     fprintf( stats, "# t\tE/keV\tV/keV\tL/(m*kg*m/s)\tP/(kg*m/s)\tT/keV\tTe/keV\tTi/keV(E-E0)/keV\n" );
     assert(stats != NULL);
 
-    for (int r0Expo = 1; r0Expo <= 1; r0Expo++) {
-        Particle particle;
-        particle.m    = ELECTRON_MASS;
-        particle.q    = ELECTRON_CHARGE;
+    Particle particle;
+    particle.m    = ELECTRON_MASS;
+    particle.q    = ELECTRON_CHARGE;
 
-        // coulomb force factor: |F| = alpha/r*r, V = alpha/r
-        double alpha  = ELECTRON_CHARGE*ELECTRON_CHARGE / ( 4*M_PI*EPS0 );
-        // collision parameter (parallel distance)
-        double s      = 0.1*CELL_SIZE_X;//250e-15;
-        // initial momentum in infinity in x direction, here: T = 10eV = p*p/2m => p = sqrt(2mT)
-        double p      = sqrt( 2* ELECTRON_MASS* 0.06 * UNITCONV_keV_to_Joule / UNIT_ENERGY );
-        // E(-inf) = E_kin(-inf)
-        double E      = p*p / ( 2*ELECTRON_MASS );
-        // angular momentum for t=-inf. L = r.x * p.y - r.y * p.x = 0 - p*s
-        double L      =-p*s;
-        // dimensionless energy. just some term which we need more than once
-        double Ew     = sqrt( 2*E / ELECTRON_MASS ) * L/alpha;
-        /* minimum distance given by v_radial(!) = 0 => E = E_pot(t) +    *
-         * E_kin_radial(t) + E_kin_angular(t) = alpha/r_min + 0 +         *
-         * + L*L/2*m*r_min^2 = E_pot(-inf) + E_kin(-inf) = 0 + p*p/2*m    *
-         *  => r_min =  alpha/2E *[ 1 +- sqrt( 1 + 4*E*L*L/2*m*alpha^2 )] *
-         *           =  alpha*m/p^2 * [ 1 + sqrt( 1 + (p*L/m*alpha)^2 ) ] *
-         *           =: alpha*m/p^2 * [ 1 + sqrt( 1 + Ew*Ew ) ]           *
-         *  Ew = p*L/m*alpha = sqrt(2*E/m) L/alpha
-         * alpha/(p*p/2m)). This formula will be the same if Ew = 0.      */
-        double rmin   = alpha/(2*E) * ( 1 + sqrt( 1 + Ew*Ew ) );
-        tout << "E(t=-inf):" << E * UNIT_ENERGY * UNITCONV_Joule_to_keV << ", L(t=-inf):" << L * UNIT_ANGULAR_MOMENTUM << "\n";
+    // coulomb force factor: |F| = alpha/r*r, V = alpha/r
+    double alpha  = ELECTRON_CHARGE*ELECTRON_CHARGE / ( 4*M_PI*EPS0 );
+    // collision parameter (parallel distance)
+    double s      = 0.1*CELL_SIZE_X;//250e-15;
+    // initial momentum in infinity in x direction, here: T = 10eV = p*p/2m => p = sqrt(2mT)
+    double p      = sqrt( 2* ELECTRON_MASS* 0.06 * UNITCONV_keV_to_Joule / UNIT_ENERGY );
+    // E(-inf) = E_kin(-inf)
+    double E      = p*p / ( 2*ELECTRON_MASS );
+    // angular momentum for t=-inf. L = r.x * p.y - r.y * p.x = 0 - p*s
+    double L      =-p*s;
+    // dimensionless energy. just some term which we need more than once
+    double Ew     = sqrt( 2*E / ELECTRON_MASS ) * L/alpha;
+    /* minimum distance given by v_radial(!) = 0 => E = E_pot(t) +    *
+     * E_kin_radial(t) + E_kin_angular(t) = alpha/r_min + 0 +         *
+     * + L*L/2*m*r_min^2 = E_pot(-inf) + E_kin(-inf) = 0 + p*p/2*m    *
+     *  => r_min =  alpha/2E *[ 1 +- sqrt( 1 + 4*E*L*L/2*m*alpha^2 )] *
+     *           =  alpha*m/p^2 * [ 1 + sqrt( 1 + (p*L/m*alpha)^2 ) ] *
+     *           =: alpha*m/p^2 * [ 1 + sqrt( 1 + Ew*Ew ) ]           *
+     *  Ew = p*L/m*alpha = sqrt(2*E/m) L/alpha
+     * alpha/(p*p/2m)). This formula will be the same if Ew = 0.      */
+    double rmin   = alpha/(2*E) * ( 1 + sqrt( 1 + Ew*Ew ) );
+    tout << "E(t=-inf):" << E * UNIT_ENERGY * UNITCONV_Joule_to_keV << ", L(t=-inf):" << L * UNIT_ANGULAR_MOMENTUM << "\n";
 
-        // initial radius for particle at simulation start
-        double r0     = 2*rmin;//rmin * pow(10,r0Expo);
-        assert( r0 > rmin ); // else asin later on will fail
-        /* initial momentum calculated simply from total energy, as there *
-         * is no need here to distinguish between radial and angular      *
-         * momentum. We did this only because we needed especially the    *
-         * radial momentum to be set 0                                    *
-         * momentum conservation: E(t) = alpha/r(t) + p(t)^2/2m           *
-         *  => p = sqrt[ ( E - alpha/r0 - L*L/2*m*r0 ) * 2m ]             */
-        double p0   = sqrt(2*ELECTRON_MASS) * sqrt( E - alpha/r0 );
-        /* Needed for x,y EXPLAIN DERIVATION !!! */
-        double phi0 = M_PI + asin( 1 / sqrt(Ew*Ew+1) )
-                           - asin( ( Ew*L/( sqrt(2*ELECTRON_MASS*E)*r0 ) + 1 ) / sqrt(Ew*Ew+1) );
+    // initial radius for particle at simulation start
+    double r0     = 2*rmin;//rmin * pow(10,r0Expo);
+    assert( r0 > rmin ); // else asin later on will fail
+    /* initial momentum calculated simply from total energy, as there *
+     * is no need here to distinguish between radial and angular      *
+     * momentum. We did this only because we needed especially the    *
+     * radial momentum to be set 0                                    *
+     * momentum conservation: E(t) = alpha/r(t) + p(t)^2/2m           *
+     *  => p = sqrt[ ( E - alpha/r0 - L*L/2*m*r0 ) * 2m ]             */
+    double p0   = sqrt(2*ELECTRON_MASS) * sqrt( E - alpha/r0 );
+    /* Needed for x,y EXPLAIN DERIVATION !!! */
+    double phi0 = M_PI + asin( 1 / sqrt(Ew*Ew+1) )
+                       - asin( ( Ew*L/( sqrt(2*ELECTRON_MASS*E)*r0 ) + 1 ) / sqrt(Ew*Ew+1) );
 
-        /* r.x * 10 => deviation of theta / 10 approx. Shouldn't be because       *
-         * of wrongly calculated p vs. p_inf, because p_inf is correctly          *
-         * calculated from total energy. Therefore it should be a geometrical     *
-         * problem, because we want to know the asymptotes of the trajectories.   *
-         * Is also almost independent of Integration method for 1e5 or more steps *
-         * p may be correct, but the direction of p could still be error prone !  */
-        const double x =-r0*cos(M_PI - phi0);
-        const double y = r0*sin(M_PI - phi0);
-        /* r.x * p.y - r.y * p.x = L and p.x^2 + p.y^2 = p0^2             *
-         * x*sqrt(p0^2 - px^2) - y*px = L =>                              *
-         *      ( p0^2 - px^2 ) * x^2 = L^2 + px^2*y^2 + 2*L*px*y <=>     *
-         *  0 = px^2 ( x^2 + y^2 ) + 2*L*px*y + L^2 - p0^2*x^2     =>     *
-         * px =-L*y/r0^2 +- sqrt[(L*y/r0^2)^2 - L^2/r0^2 + p0^2*x^2/r0^2] *
-         *    =-L/r0^2 * { y + sqrt[ y^2 - r0^2 + p0^2 x^2 r0^2/ L^2 ] }  *
-         *    =-L/r0^2 * { y + sqrt[ -1 + p0^2 r0^2/ L^2 ] *x }           */
-        particle.p.x = -L/(r0*r0) * ( y - x * sqrt( -1 + pow( r0*p0/L ,2) ) );
-        particle.p.y = sqrt(p0*p0 - particle.p.x * particle.p.x);
-        particle.p.z = 0;
-        particle.r.x = x + 0.50 * CELL_SIZE_X;
-        particle.r.y = y + 0.25 * CELL_SIZE_X;
-        particle.r.z = 0;
-        simBox.electrons[0][0][0].push_back( particle );
+    /* r.x * 10 => deviation of theta / 10 approx. Shouldn't be because       *
+     * of wrongly calculated p vs. p_inf, because p_inf is correctly          *
+     * calculated from total energy. Therefore it should be a geometrical     *
+     * problem, because we want to know the asymptotes of the trajectories.   *
+     * Is also almost independent of Integration method for 1e5 or more steps *
+     * p may be correct, but the direction of p could still be error prone !  */
+    const double x =-r0*cos(M_PI - phi0);
+    const double y = r0*sin(M_PI - phi0);
+    /* r.x * p.y - r.y * p.x = L and p.x^2 + p.y^2 = p0^2             *
+     * x*sqrt(p0^2 - px^2) - y*px = L =>                              *
+     *      ( p0^2 - px^2 ) * x^2 = L^2 + px^2*y^2 + 2*L*px*y <=>     *
+     *  0 = px^2 ( x^2 + y^2 ) + 2*L*px*y + L^2 - p0^2*x^2     =>     *
+     * px =-L*y/r0^2 +- sqrt[(L*y/r0^2)^2 - L^2/r0^2 + p0^2*x^2/r0^2] *
+     *    =-L/r0^2 * { y + sqrt[ y^2 - r0^2 + p0^2 x^2 r0^2/ L^2 ] }  *
+     *    =-L/r0^2 * { y + sqrt[ -1 + p0^2 r0^2/ L^2 ] *x }           */
+    particle.p.x = -L/(r0*r0) * ( y - x * sqrt( -1 + pow( r0*p0/L ,2) ) );
+    particle.p.y = sqrt(p0*p0 - particle.p.x * particle.p.x);
+    particle.p.z = 0;
+    particle.r.x = x + 0.50 * CELL_SIZE_X;
+    particle.r.y = y + 0.25 * CELL_SIZE_X;
+    particle.r.z = 0;
+    simBox.electrons[0][0][0].push_back( particle );
+    // total scattering, so the angle between the incoming and outgoing trajectory asymptote
+    double theta_inf = 2*asin( 1/sqrt( 1 + Ew*Ew ) ); 
 
-        double initial_angle = acos( particle.p * Vec(1,0,0) / particle.p.norm() ) *180./M_PI;
-        printf( "phi0:%E, p0:%E, p_inf:%E, <(p0,x):%E\n", (M_PI-phi0)/M_PI*180, p0,p,initial_angle );
-        printf("     ( %e )         ( %e )\n  ", particle.r.x, particle.p.x );
-        printf("r0 = ( %e )  , p0 = ( %e )\n  ", particle.r.y, particle.p.y );
-        printf("     ( %e )         ( %e )\n\n", particle.r.z, particle.p.z );
-        
-        // the much much heavier ion which is approximately at rest
-        particle.m   = ION_MASS;
-        particle.q   = ION_CHARGE;
-        particle.r.x = 0.50 * CELL_SIZE_X;
-        particle.r.y = 0.25 * CELL_SIZE_Y;
-        particle.r.z = 0;
-        particle.p.x = 0;
-        particle.p.y = 0;
-        particle.p.z = 0;
-        simBox.ions[0][0][0].push_back( particle );
-    }
+    double initial_angle = acos( particle.p * Vec(1,0,0) / particle.p.norm() ) *180./M_PI;
+    printf( "phi0:%E, p0:%E, p_inf:%E, <(p0,x):%E\n", (M_PI-phi0)/M_PI*180, p0,p,initial_angle );
+    printf("     ( %e )         ( %e )\n  ", particle.r.x, particle.p.x );
+    printf("r0 = ( %e )  , p0 = ( %e )\n  ", particle.r.y, particle.p.y );
+    printf("     ( %e )         ( %e )\n\n", particle.r.z, particle.p.z );
+    
+    // the much much heavier ion which is approximately at rest
+    particle.m   = ION_MASS;
+    particle.q   = ION_CHARGE;
+    particle.r.x = 0.50 * CELL_SIZE_X;
+    particle.r.y = 0.25 * CELL_SIZE_Y;
+    particle.r.z = 0;
+    particle.p.x = 0;
+    particle.p.y = 0;
+    particle.p.z = 0;
+    simBox.ions[0][0][0].push_back( particle );
+
+    // Initial analysis and output
     simBox.Te0 = simBox.CalcTotalKineticEnergyElectrons();
     simBox.Ti0 = simBox.CalcTotalKineticEnergyIons();
+    simBox.L0  = simBox.CalcTotalAngularMomentum();
     simBox.E0  = simBox.Te0 + simBox.Ti0 + simBox.CalcTotalPotentialEnergy();
     simBox.P0  = simBox.CalcTotalMomentum();
-    tout << "Initial total   Energy P0.x : " << simBox.P0.x * UNIT_MOMENTUM << " kg m/s\n";
+    tout << "Initial total Momentum P0.x : " << simBox.P0.x * UNIT_MOMENTUM << " kg m/s\n";
+    tout << "Initial total Ang.Mom L0.z  : " << simBox.L0.x * UNIT_ANGULAR_MOMENTUM << " kg m^2/s\n";
     tout << "Initial total   Energy E0   : " << simBox.E0   * UNIT_ENERGY * UNITCONV_Joule_to_keV << "keV\n";
     tout << "Initial kinetic Energy Te0  : " << simBox.Te0  * UNIT_ENERGY * UNITCONV_Joule_to_keV << "keV\n";
     tout << "Initial kinetic Energy Ti0  : " << simBox.Ti0  * UNIT_ENERGY * UNITCONV_Joule_to_keV << "keV\n";
@@ -778,11 +790,68 @@ int main(void) {
 
     tout << "Stats fprintf interval: " << PRINTF_SIMDATA_INTERVAL << " meaning every " << PRINTF_SIMDATA_INTERVAL * DELTA_T_SI << " s\n";
 
+    //open log file
+    FILE * log = NULL;
+    log = fopen ("traj.dat","w");
+    fprintf(log,"#t\trx\try\trz\tpx\tpy\tpz\tr\ttheta\t(Et-E)/E\t(Lt-L)/L"
+                "\ttheta analyt.\t(th-th_anal/th_anal\n");
+    assert(log != NULL);
+    
+	//some constants which only depend on the initial conditions
+    Particle & p1 = simBox.electrons[0][0][0].front();
+    Particle & p2 = simBox.ions     [0][0][0].front();
+    Vec dir0      = p1.p / p1.p.norm();      //to remember initial direction of movement
+	double theta0 = asin( ( Ew*L/( sqrt(2*p1.m*E) * r0  ) + 1 ) / sqrt( Ew*Ew+1 ) ) 
+       - asin( 1/sqrt( Ew*Ew+1 ) ) -(M_PI - acos( (p1.r-p2.r)*Vec(1,0,0)/(p1.r-p2.r).norm() ) );
+    tout << "L:" << L * UNIT_ANGULAR_MOMENTUM << " , E:" << E << " , epsilon:" << theta0 << "\n";
+    
+    // initialize some values we will calculate from the simulation
+    double rmin_num = r0;
+    double phi_min; //holds angle of position nearest to scattering center
+    bool returning = false;
+    
     // Initialize Verlet Integration (Leapfrog): shift momentum half a time step
-    simBox.Verlet( DELTA_T, true );
+    // this half step makes many calculated deviations wrong, because we prepare the initial state so carefully !!
+    //simBox.Verlet( DELTA_T, true );
     // Main Simulation Loop
     for (uint32_t currentStep = 0; currentStep < NUMBER_OF_STEPS; currentStep++) {
         simBox.Verlet( DELTA_T );
+        
+
+        //calc theta, r
+        Particle & p1 = simBox.electrons[0][0][0].front();
+        Particle & p2 = simBox.ions     [0][0][0].front();
+        double rt     = ( p1.r - p2.r ).norm();
+        double Et     = simBox.CalcTotalEnergy();
+        double Lt     = simBox.CalcTotalAngularMomentum().z;
+        double thetat = acos( (p1.r-p2.r)/(p1.r-p2.r).norm() * Vec(1,0,0)  );
+        if (rt < rmin_num) {
+            rmin_num = rt;
+            phi_min = thetat;
+        } else if (!returning) {
+            returning = true;
+            tout << "Going back home now!\n"; //but calculate phi0 beforehand
+            tout << "phi_min:" << phi_min*180/M_PI << "\n";
+            tout << "rmin num.: " << rmin_num << " <-> " << rmin << " :rmin anal. => dev:" << (rmin_num-rmin)/rmin << "\n";
+        }
+
+        //calc deviation to analytical theta
+        double theta      = acos( (p1.r-p2.r) / (p1.r-p2.r).norm() * Vec(1,0,0) );
+        double phit       = asin( (Ew*L/(sqrt(2*p1.m*E)*rt)+1) / sqrt(Ew*Ew+1) );
+        double theta_calc = M_PI + theta0 + theta_inf/2.0 - phit ;
+        if (returning)
+            theta_calc = theta0 + theta_inf/2.0 + phit;
+            
+        //Debug Output
+        if ( currentStep % PRINTF_INTERVAL == 0 || rt > r0 ) {
+            fprintf(log, "%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\n", currentStep*DELTA_T_SI, p1.r.x * UNIT_LENGTH, p1.r.y * UNIT_LENGTH, p1.r.z * UNIT_LENGTH, p1.p.x * UNIT_LENGTH, p1.p.y * UNIT_LENGTH, p1.p.z * UNIT_LENGTH, rt * UNIT_LENGTH, theta, (Et-simBox.E0)/simBox.E0, (Lt-simBox.L0.z)/simBox.L0.z, theta_calc, (theta-theta_calc)/theta_calc );
+        }
+        if ( currentStep % PRINT_INTERVAL == 0 ) {
+            tout << "r" << rt << ", theta: num:" << theta*180/M_PI << " deg, anal:" << theta_calc*180/M_PI << "\n";
+            tout << "    ( " << p1.r.x << " )        ( " << p1.p.x << " )\n";
+            tout << "r = ( " << p1.r.y << " )  , p = ( " << p1.p.y << " )\n";
+            tout << "    ( " << p1.r.z << " )        ( " << p1.p.z << " )\n";
+        }
         
         /*
         struct return_data data = simulate_scattering( 2, particle, dt, "traj.dat", steps/200, steps );
@@ -797,7 +866,6 @@ int main(void) {
             const double Ti = simBox.CalcTotalKineticEnergyIons     () * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double T  = simBox.CalcTotalKineticEnergy         () * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double V  = simBox.CalcTotalPotentialEnergy       () * UNIT_ENERGY * UNITCONV_Joule_to_keV;
-            const double L  = simBox.CalcTotalAngularMomentum       () * UNIT_ANGULAR_MOMENTUM;
             const Vec Pmax  = simBox.MaxMomentum                    () * UNIT_MOMENTUM;
             const double E  = T + V;
             const double P  = Pvec.x + Pvec.y + Pvec.z - (simBox.P0.x + simBox.P0.y + simBox.P0.z);
@@ -809,9 +877,13 @@ int main(void) {
             if (currentStep % PRINT_INTERVAL == 0)
                 tout << "[" << 100*(double)currentStep/(double)NUMBER_OF_STEPS << "%] E: " << E << ", V: " << V << ", <P.x>:" << Pvec.x/NUMBER_OF_PARTICLES << ", (P.x-P0)/Pmax.x:" << ( Pvec.x - simBox.P0.x * UNIT_MOMENTUM ) / Pmax.x /*max(max(Pmax.x,Pmax.y),Pmax.z)*/ << "\n";
         }
+        
+        if (simBox.numberOfAppliedBoundaryConditions > 0)
+            break;
     }
 
     fclose(stats);
+    fclose(log);
 
     return 0;
 }

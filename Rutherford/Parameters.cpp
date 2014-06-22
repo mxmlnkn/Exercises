@@ -21,7 +21,7 @@ const double MUE0_SI                   = M_PI * 4.e-7;     // N/A^2 = kg*m/C^2
 const double EPS0_SI                   = 1.0/(MUE0_SI*SPEED_OF_LIGHT_SI*SPEED_OF_LIGHT_SI);    // C^2/J*m, 8.854187817e-12
 
 //GridConfig.param
-const double DELTA_T_SI                = 1e-21;
+const double DELTA_T_SI                = 1e-22;
 const uint32_t NUMBER_OF_CELLS_X       = 1;
 const uint32_t NUMBER_OF_CELLS_Y       = 1;
 const uint32_t NUMBER_OF_CELLS_Z       = 1;
@@ -47,7 +47,7 @@ const uint16_t DEFAULT_PARTICLE_SHAPE  = 0;  //00:point-point, 01:ball-ball (CIC
 //output
 const uint32_t PRINT_INTERVAL          = NUMBER_OF_STEPS / 10;
 const uint32_t PRINTF_INTERVAL         = 100;
-const uint32_t PRINTF_SIMDATA_INTERVAL = 100; //min( int(ceil( 1e-18 / DELTA_T_SI )), 1 );
+const uint32_t PRINTF_SIMDATA_INTERVAL = 1000; //min( int(ceil( 1e-18 / DELTA_T_SI )), 1 );
 // for dt = 1e-19 => Nprint = 10. for 1e-17 it prints every time step, so that we can see something
 
 //================================== Units ===================================//

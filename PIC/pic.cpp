@@ -190,6 +190,7 @@ public:
     SimulationBox();
     ~SimulationBox();
     double E0, Te0, Ti0;
+    uint64_t numberOfAppliedBoundaryConditions;
     Vec P0;
     list<Particle> electrons[ NUMBER_OF_CELLS_X ][ NUMBER_OF_CELLS_Y ][ NUMBER_OF_CELLS_Z ];
     list<Particle>      ions[ NUMBER_OF_CELLS_X ][ NUMBER_OF_CELLS_Y ][ NUMBER_OF_CELLS_Z ];
@@ -202,9 +203,10 @@ public:
     double CalcTotalKineticEnergyElectrons( void );
     double CalcTotalKineticEnergyIons( void );
     double CalcTotalKineticEnergy( void );
+    double CalcTotalEnergy( void );
     Vec CalcTotalMomentum( void );
     Vec MaxMomentum( void );
-    double CalcTotalAngularMomentum( void );
+    Vec CalcTotalAngularMomentum( void );
     
     void PushLocation( const double dt );
     void ClearDp( void );
@@ -214,7 +216,7 @@ public:
     bool CheckBoundaryConditions( Particle & particle );
 };
 
-SimulationBox::SimulationBox() : p(Vec(0,0,0)) {
+SimulationBox::SimulationBox() : p(Vec(0,0,0)), numberOfAppliedBoundaryConditions(0) {
 
     // Open log file
     this->simdata_eons = fopen ("Electrons.dat","w");
@@ -410,6 +412,7 @@ bool SimulationBox::CheckBoundaryConditions( Particle & particle ) {
             }
         }
     }
+    this->numberOfAppliedBoundaryConditions += outOfBounds;
     return outOfBounds > 0;
 }
 
@@ -494,6 +497,10 @@ double SimulationBox::CalcTotalKineticEnergy( void ) {
     return this->CalcTotalKineticEnergyIons() + this->CalcTotalKineticEnergyElectrons();
 }
 
+double SimulationBox::CalcTotalEnergy( void ) {
+    return this->CalcTotalKineticEnergy() + this->CalcTotalPotentialEnergy();
+}
+
 double SimulationBox::CalcTotalPotentialEnergy( void ) {
     double E = 0;
     // for every cell calculate potential of particles in the same cell. If we want the full potential over all cells the loop will have to be more complex !!!
@@ -524,14 +531,27 @@ double SimulationBox::CalcTotalPotentialEnergy( void ) {
     return E;
 }
 
-double SimulationBox::CalcTotalAngularMomentum( void ) {
+Vec SimulationBox::CalcTotalAngularMomentum( void ) {
     Vec L(0,0,0);
-    /*for (unsigned int i = 0; i < particleCount; i++) {
-        L.x += particle[i].r.y * particle[i].p.z - particle[i].r.z * particle[i].p.y;
-        L.y += particle[i].r.z * particle[i].p.x - particle[i].r.x * particle[i].p.z;
-        L.z += particle[i].r.x * particle[i].p.y - particle[i].r.y * particle[i].p.x;
-    }*/
-    return L.norm();
+    for (uint32_t ix = 0; ix < NUMBER_OF_CELLS_X; ix++)
+    for (uint32_t iy = 0; iy < NUMBER_OF_CELLS_Y; iy++)
+    for (uint32_t iz = 0; iz < NUMBER_OF_CELLS_Z; iz++) {
+        list<Particle> & eons = this->electrons[ix][iy][iz];
+        list<Particle> & ions = this->ions     [ix][iy][iz];
+        // electrons
+        for (list<Particle>::iterator i = eons.begin(); i != eons.end(); i++) {
+            L.x += i->r.y * i->p.z - i->r.z * i->p.y;
+            L.y += i->r.z * i->p.x - i->r.x * i->p.z;
+            L.z += i->r.x * i->p.y - i->r.y * i->p.x;
+        }
+        // ions
+        for (list<Particle>::iterator i = ions.begin(); i != ions.end(); i++) {
+            L.x += i->r.y * i->p.z - i->r.z * i->p.y;
+            L.y += i->r.z * i->p.x - i->r.x * i->p.z;
+            L.z += i->r.x * i->p.y - i->r.y * i->p.x;
+        }
+    }
+    return L;
 }
 
 Vec SimulationBox::CalcTotalMomentum( void ) {
@@ -873,13 +893,13 @@ int main(void) {
             const double Ti = simBox.CalcTotalKineticEnergyIons     () * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double T  = simBox.CalcTotalKineticEnergy         () * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             const double V  = simBox.CalcTotalPotentialEnergy       () * UNIT_ENERGY * UNITCONV_Joule_to_keV;
-            const double L  = simBox.CalcTotalAngularMomentum       () * UNIT_ANGULAR_MOMENTUM;
+            const Vec    L  = simBox.CalcTotalAngularMomentum       () * UNIT_ANGULAR_MOMENTUM;
             const Vec Pmax  = simBox.MaxMomentum                    () * UNIT_MOMENTUM;
             const double E  = T + V;
             const double P  = Pvec.x + Pvec.y + Pvec.z - (simBox.P0.x + simBox.P0.y + simBox.P0.z);
             const double dE = E - simBox.E0 * UNIT_ENERGY * UNITCONV_Joule_to_keV;
             if (currentStep % PRINTF_INTERVAL == 0)
-                fprintf( stats, "%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\n", currentStep * DELTA_T_SI, E, V, L, P, T, Te, Ti, dE);
+                fprintf( stats, "%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\t%e\n", currentStep * DELTA_T_SI, E, V, L.z, P, T, Te, Ti, dE);
             if (currentStep % PRINTF_SIMDATA_INTERVAL == 0)
                 simBox.DumpData();
             if (currentStep % PRINT_INTERVAL == 0)
